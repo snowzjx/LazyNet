@@ -4,7 +4,7 @@ use crate::collectors::{
     read_iface_counters, Collector, NetworkCollector,
 };
 use crate::config::{CollectorConfig, UiConfig};
-use crate::data::{IfaceCounters, Inventory, NodeType, RdmaCounters};
+use crate::data::{IfaceCounters, Inventory, Node, NodeType, RdmaCounters};
 use anyhow::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
@@ -296,6 +296,12 @@ impl Ui {
                                 self.selected_index += 1;
                             }
                         }
+                        KeyCode::Left => {
+                            self.navigate_connected(inventory, DirectionHint::Left);
+                        }
+                        KeyCode::Right => {
+                            self.navigate_connected(inventory, DirectionHint::Right);
+                        }
                         KeyCode::Esc => {
                             self.search_query.clear();
                             self.show_help = false;
@@ -399,45 +405,65 @@ impl Ui {
     }
 
     fn current_list_len(&self, inventory: &Inventory) -> usize {
+        self.filtered_nodes(inventory, self.current_tab).len()
+    }
+
+    fn filtered_nodes<'a>(&self, inventory: &'a Inventory, tab: Tab) -> Vec<&'a Node> {
         let q = self.search_query.to_lowercase();
+        filtered_nodes_for_query(inventory, tab, &q)
+    }
+
+    fn selected_node_id(&self, inventory: &Inventory) -> Option<String> {
+        let nodes = self.filtered_nodes(inventory, self.current_tab);
+        nodes
+            .get(self.selected_index.min(nodes.len().saturating_sub(1)))
+            .map(|node| node.id.clone())
+    }
+
+    fn select_node(&mut self, inventory: &Inventory, tab: Tab, node_id: &str) -> bool {
+        let nodes = filtered_nodes_for_query(inventory, tab, "");
+        let Some(index) = nodes.iter().position(|node| node.id == node_id) else {
+            return false;
+        };
+
+        self.search_query.clear();
+        self.current_tab = tab;
+        self.selected_index = index;
+        true
+    }
+
+    fn navigate_connected(&mut self, inventory: &Inventory, direction: DirectionHint) {
+        let Some(node_id) = self.selected_node_id(inventory) else {
+            return;
+        };
+
         match self.current_tab {
-            Tab::Interfaces => inventory
-                .get_nodes_by_type(&NodeType::NetworkInterface)
-                .iter()
-                .filter(|n| {
-                    q.is_empty()
-                        || n.get_property("name")
-                            .map(|v| v.to_lowercase().contains(&q))
-                            .unwrap_or(false)
-                })
-                .count(),
-            Tab::Rdma => inventory
-                .get_nodes_by_type(&NodeType::RdmaDevice)
-                .iter()
-                .filter(|n| {
-                    q.is_empty()
-                        || ["name", "display_name", "port"].iter().any(|key| {
-                            n.get_property(key)
-                                .map(|v| v.to_lowercase().contains(&q))
-                                .unwrap_or(false)
-                        })
-                })
-                .count(),
-            Tab::Pci => inventory
-                .get_nodes_by_type(&NodeType::PciDevice)
-                .iter()
-                .filter(|n| {
-                    q.is_empty()
-                        || ["pci_id", "vendor", "device", "class", "driver"]
-                            .iter()
-                            .any(|k| {
-                                n.get_property(k)
-                                    .map(|v| v.to_lowercase().contains(&q))
-                                    .unwrap_or(false)
-                            })
-                })
-                .count(),
-            Tab::Raw => 0,
+            Tab::Interfaces => {
+                let primary = match direction {
+                    DirectionHint::Left => NodeType::PciDevice,
+                    DirectionHint::Right => NodeType::RdmaDevice,
+                };
+                let fallback = match direction {
+                    DirectionHint::Left => NodeType::RdmaDevice,
+                    DirectionHint::Right => NodeType::PciDevice,
+                };
+
+                if let Some(target) = first_connected_node(inventory, &node_id, &primary) {
+                    let tab = tab_for_node_type(&target.node_type);
+                    self.select_node(inventory, tab, &target.id);
+                } else if let Some(target) = first_connected_node(inventory, &node_id, &fallback) {
+                    let tab = tab_for_node_type(&target.node_type);
+                    self.select_node(inventory, tab, &target.id);
+                }
+            }
+            Tab::Rdma | Tab::Pci => {
+                if let Some(target) =
+                    first_connected_node(inventory, &node_id, &NodeType::NetworkInterface)
+                {
+                    self.select_node(inventory, Tab::Interfaces, &target.id);
+                }
+            }
+            Tab::Raw => {}
         }
     }
 
@@ -466,6 +492,10 @@ impl Ui {
             Line::from(vec![
                 Span::styled("1-4", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" - Jump to tab"),
+            ]),
+            Line::from(vec![
+                Span::styled("←/→", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(" - Jump to connected device"),
             ]),
             Line::from(vec![
                 Span::styled("↑/↓", Style::default().add_modifier(Modifier::BOLD)),
@@ -524,16 +554,16 @@ impl Ui {
         } else {
             match &self.recording {
                 Some(CounterRecording::Started(_)) => (
-                    "● REC  ] Finish recording  |  [ Restart  |  q: Quit | Tab: Switch tabs | ↑↓: Navigate".into(),
+                    "● REC  ] Finish recording  |  [ Restart  |  ←→ Connected | q: Quit | Tab: Switch tabs | ↑↓: Navigate".into(),
                     Style::default().bg(Color::Red).fg(Color::White),
                 ),
                 Some(CounterRecording::Finished { start, end }) => {
                     let secs = end.taken_at.duration_since(start.taken_at).as_secs_f64();
-                    (format!("■ DELTA ({:.1}s)  [ New recording  |  Esc: Clear  |  q: Quit | Tab: Switch tabs | ↑↓: Navigate", secs),
+                    (format!("■ DELTA ({:.1}s)  [ New recording  |  Esc: Clear  |  ←→ Connected | q: Quit | Tab: Switch tabs | ↑↓: Navigate", secs),
                      Style::default().bg(Color::Green).fg(Color::Black))
                 }
                 None => (
-                    "q: Quit | h: Help | Tab: Switch tabs | ↑↓: Navigate | /: Search | [: Start recording".into(),
+                    "q: Quit | h: Help | Tab: Switch tabs | ↑↓: Navigate | ←→: Connected | /: Search | [: Start recording".into(),
                     Style::default().bg(Color::DarkGray).fg(Color::White),
                 ),
             }
@@ -563,6 +593,80 @@ impl Ui {
             current_index - 1
         };
         self.current_tab = tabs[prev_index];
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DirectionHint {
+    Left,
+    Right,
+}
+
+fn filtered_nodes_for_query<'a>(inventory: &'a Inventory, tab: Tab, q: &str) -> Vec<&'a Node> {
+    match tab {
+        Tab::Interfaces => inventory
+            .get_nodes_by_type(&NodeType::NetworkInterface)
+            .iter()
+            .filter(|n| {
+                q.is_empty()
+                    || n.get_property("name")
+                        .map(|v| v.to_lowercase().contains(&q))
+                        .unwrap_or(false)
+            })
+            .copied()
+            .collect(),
+        Tab::Rdma => inventory
+            .get_nodes_by_type(&NodeType::RdmaDevice)
+            .iter()
+            .filter(|n| {
+                q.is_empty()
+                    || ["name", "display_name", "port"].iter().any(|key| {
+                        n.get_property(key)
+                            .map(|v| v.to_lowercase().contains(&q))
+                            .unwrap_or(false)
+                    })
+            })
+            .copied()
+            .collect(),
+        Tab::Pci => inventory
+            .get_nodes_by_type(&NodeType::PciDevice)
+            .iter()
+            .filter(|n| {
+                q.is_empty()
+                    || ["pci_id", "vendor", "device", "class", "driver"]
+                        .iter()
+                        .any(|k| {
+                            n.get_property(k)
+                                .map(|v| v.to_lowercase().contains(&q))
+                                .unwrap_or(false)
+                        })
+            })
+            .copied()
+            .collect(),
+        Tab::Raw => Vec::new(),
+    }
+}
+
+fn first_connected_node<'a>(
+    inventory: &'a Inventory,
+    node_id: &str,
+    node_type: &NodeType,
+) -> Option<&'a Node> {
+    inventory
+        .find_connected_nodes(node_id)
+        .into_iter()
+        .find(|node| same_node_type(&node.node_type, node_type))
+}
+
+fn same_node_type(a: &NodeType, b: &NodeType) -> bool {
+    std::mem::discriminant(a) == std::mem::discriminant(b)
+}
+
+fn tab_for_node_type(node_type: &NodeType) -> Tab {
+    match node_type {
+        NodeType::RdmaDevice => Tab::Rdma,
+        NodeType::PciDevice => Tab::Pci,
+        _ => Tab::Interfaces,
     }
 }
 
