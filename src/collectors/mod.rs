@@ -1,4 +1,4 @@
-use crate::data::{Inventory, Node, NodeType};
+use crate::data::{IfaceCounters, Inventory, Node, NodeType};
 use anyhow::Result;
 use std::process::Command;
 
@@ -240,9 +240,34 @@ impl Collector for NetworkCollector {
         }
         
         for node in nodes {
+            if let Some(name) = node.get_property("name") {
+                inventory.iface_counters.insert(name.clone(), read_iface_counters(name));
+            }
             inventory.add_node(node);
         }
         
         Ok(())
+    }
+}
+
+fn read_stat(dev: &str, stat: &str) -> u64 {
+    std::fs::read_to_string(format!("/sys/class/net/{}/statistics/{}", dev, stat))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+pub fn read_iface_counters(dev: &str) -> IfaceCounters {
+    IfaceCounters {
+        rx_bytes:   read_stat(dev, "rx_bytes"),
+        tx_bytes:   read_stat(dev, "tx_bytes"),
+        rx_packets: read_stat(dev, "rx_packets"),
+        tx_packets: read_stat(dev, "tx_packets"),
+        rx_errors:  read_stat(dev, "rx_errors"),
+        tx_errors:  read_stat(dev, "tx_errors"),
+        rx_dropped: read_stat(dev, "rx_dropped"),
+        tx_dropped: read_stat(dev, "tx_dropped"),
+        rx_missed:  read_stat(dev, "rx_missed_errors"),
+        collisions: read_stat(dev, "collisions"),
     }
 }

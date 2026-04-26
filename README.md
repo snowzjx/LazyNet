@@ -1,68 +1,68 @@
-# LazyNet
+# LazyNet v0.1
 
-A Terminal User Interface (TUI) system tool for network device inspection and debugging.
+A terminal UI for inspecting network devices, RDMA adapters, and PCIe hardware — with live counter recording and delta analysis.
 
-## Overview
+## Counter Recording
 
-LazyNet provides a unified, extensible, and configurable terminal interface to inspect network-related devices and their relationships. It's designed for systems researchers, datacenter operators, performance engineers, and kernel/networking developers.
+> **The killer feature.** Inspired by video editing in/out points — press `[` to mark the start, do whatever you need (run a benchmark, send traffic, trigger a workload), then press `]` to mark the end.
+
+LazyNet instantly shows you:
+
+- **Δ bytes / packets** — exactly how much traffic moved during the window
+- **Throughput rate** — RX/TX in bps/Kbps/Mbps/Gbps calculated over the precise elapsed time
+- **Δ error counters** — any drops, errors, or missed frames that occurred, highlighted in red
+- **RDMA deltas** — port RCV/XMT data, RoCE retransmits, CNP/ECN congestion events, out-of-buffer counts
+
+Press `Esc` to exit delta view and return to live counters. Press `[` again to start a new recording.
+
+This makes it trivial to answer questions like:
+- "How much bandwidth did that `iperf3` run actually use?"
+- "Did any PFC pause frames fire during that congestion event?"
+- "Were there RNR NAK retries during my RDMA benchmark?"
 
 ## Features
 
-- **Unified Device View**: Inspect network interfaces, PCI devices, and RDMA devices in one place
-- **Relationship Mapping**: Understand connections between netdevs, PCI devices, and RDMA devices
-- **Fast Performance**: <200ms refresh time, <50MB memory usage
-- **No Root Required**: Works with user privileges (some advanced features may require root)
-- **JSON Export**: Export inventory data for automation and analysis
-- **Configurable**: Customize behavior via `~/.lazynet/config.toml`
+- **Interfaces tab** — all network interfaces with state, MAC, MTU, and live traffic counters
+- **RDMA tab** — RDMA devices with transport type, firmware version, GUID, netdev mapping, PFC config, port counters, and RoCE/congestion counters (ECN/CNP, retransmits, buffer errors)
+- **PCI tab** — all PCI devices with vendor/device/class, driver, PCIe link speed and width (with degraded detection), NUMA node, IOMMU group
+- **Raw tab** — full JSON inventory dump for debugging
+- **Counter recording** — press `[` to start, `]` to finish; shows delta counts and throughput rates
+- **Search** — `/` to filter any tab by name, vendor, or description
+- **Navigation** — `↑`/`↓` to select items; detail panel updates live
 
 ## Installation
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd LazyNet
-
-# Build the project
 cargo build --release
-
-# Install (optional)
+# optional
 cargo install --path .
 ```
 
 ## Usage
 
-### Basic Usage
-
 ```bash
-# Launch the TUI
-lazynet
-
-# Export inventory to JSON
-lazynet --export
-
-# Use custom config file
+lazynet              # launch TUI
+lazynet --export     # print inventory as JSON
 lazynet --config /path/to/config.toml
 ```
 
-### TUI Navigation
+## Keybindings
 
-- **Tab/Shift+Tab**: Switch between tabs
-- **1-4**: Jump directly to tabs (Interfaces, RDMA, PCI, Raw)
-- **h/F1**: Toggle help
-- **q**: Quit
-- **/**: Search (TODO)
-- **Esc**: Clear search/Close help
-
-### Tabs
-
-1. **Interfaces**: Network interfaces with IP, MTU, MAC, and state information
-2. **RDMA**: RDMA devices with transport type (InfiniBand/RoCE) and netdev mappings
-3. **PCI**: PCI devices with descriptions and network device connections
-4. **Raw**: Raw JSON inventory data for debugging
+| Key | Action |
+|-----|--------|
+| `Tab` / `Shift+Tab` | Switch tabs |
+| `1`–`4` | Jump to tab |
+| `↑` / `↓` | Navigate list |
+| `/` | Search |
+| `Esc` | Clear search / exit delta view |
+| `[` | Start counter recording |
+| `]` | Finish recording, show delta |
+| `h` / `F1` | Toggle help |
+| `q` | Quit |
 
 ## Configuration
 
-LazyNet uses a TOML configuration file located at `~/.lazynet/config.toml`. A default configuration is created automatically on first run.
+`~/.lazynet/config.toml` is created automatically on first run.
 
 ```toml
 [ui]
@@ -81,90 +81,24 @@ pretty_json = true
 include_metadata = true
 ```
 
-## Platform Support
+## Data Sources
 
-- **Linux**: First-class support with full feature set
-- **macOS**: Limited support (network interfaces and PCI devices)
+| Data | Source |
+|------|--------|
+| Network interfaces | `ip addr`, `/sys/class/net/*/statistics/` |
+| PCI devices | `lspci -vmm`, `/sys/bus/pci/devices/*/` |
+| RDMA devices | `/sys/class/infiniband/`, `ibv_devinfo` |
+| RDMA→netdev mapping | `rdma link` |
+| PFC config | `dcb pfc show` |
+| PFC / port counters | `ethtool -S`, `/sys/class/infiniband/*/ports/1/counters/` |
+| RoCE hw counters | `/sys/class/infiniband/*/ports/1/hw_counters/` |
 
-## Architecture
+## Requirements
 
-```
-Collectors → Facts → Inventory Graph → Views → TUI
-```
-
-- **Collectors**: Gather data from system interfaces (`ip`, `lspci`, `ibstat`, sysfs)
-- **Inventory Graph**: Unified data model with nodes (devices) and edges (relationships)
-- **Views**: Tab-specific rendering of inventory data
-- **TUI**: Terminal interface built with ratatui
-
-## Data Model
-
-The core data model consists of:
-
-- **Inventory**: Container for all nodes and edges
-- **Node**: Represents a device (network interface, PCI device, RDMA device)
-- **Edge**: Represents a relationship between devices
-
-## Development
-
-### Building
-
-```bash
-cargo build
-```
-
-### Running Tests
-
-```bash
-cargo test
-```
-
-### Adding New Collectors
-
-1. Implement the `Collector` trait
-2. Add your collector to the `collectors` module
-3. Integrate it into the `App::new()` method
-
-## Roadmap
-
-### Phase 1 (MVP) ✅
-- [x] Basic collectors (network, PCI, RDMA)
-- [x] Core TUI with tab navigation
-- [x] JSON export
-- [x] Configuration system
-
-### Phase 2 (Planned)
-- [ ] Search and filtering
-- [ ] DPDK device support
-- [ ] Live monitoring mode
-- [ ] Performance optimizations
-
-### Phase 3 (Future)
-- [ ] SSH remote mode
-- [ ] eBPF integration
-- [ ] SmartNIC/GPU support
-- [ ] Historical data tracking
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+- Linux (primary platform)
+- `lspci` for PCI data
+- `ibv_devinfo`, `rdma`, `dcb`, `ethtool` for full RDMA/PFC data (gracefully degraded if absent)
 
 ## License
 
-MIT License - see LICENSE file for details.
-
-## Troubleshooting
-
-### Common Issues
-
-1. **No RDMA devices found**: Ensure RDMA drivers are loaded and devices are present
-2. **Permission denied**: Some collectors may require elevated privileges for full functionality
-3. **Command not found**: Ensure required system tools (`ip`, `lspci`) are installed
-
-### Debug Mode
-
-Use the Raw tab to inspect the complete inventory data structure for debugging.
+MIT

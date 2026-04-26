@@ -1,10 +1,73 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// RDMA port counters from sysfs (ports/1/counters + ports/1/hw_counters).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RdmaCounters {
+    // Standard port counters
+    pub port_rcv_data: u64,
+    pub port_xmit_data: u64,
+    pub port_rcv_packets: u64,
+    pub port_xmit_packets: u64,
+    pub port_rcv_errors: u64,
+    pub port_xmit_discards: u64,
+    pub port_xmit_wait: u64,
+    // RoCE/congestion hw_counters
+    pub np_cnp_sent: u64,
+    pub np_ecn_marked_roce_packets: u64,
+    pub rp_cnp_handled: u64,
+    pub rp_cnp_ignored: u64,
+    pub out_of_buffer: u64,
+    pub out_of_sequence: u64,
+    pub packet_seq_err: u64,
+    pub rnr_nak_retry_err: u64,
+    pub req_transport_retries_exceeded: u64,
+    pub local_ack_timeout_err: u64,
+    pub rx_icrc_encapsulated: u64,
+}
+
+/// Traffic counters for a network interface (from /sys/class/net/<dev>/statistics/).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct IfaceCounters {
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub rx_packets: u64,
+    pub tx_packets: u64,
+    pub rx_errors: u64,
+    pub tx_errors: u64,
+    pub rx_dropped: u64,
+    pub tx_dropped: u64,
+    pub rx_missed: u64,
+    pub collisions: u64,
+}
+
+/// PFC (Priority Flow Control) settings and counters for a network device.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PfcInfo {
+    /// Per-priority PFC enabled state (index 0-7)
+    pub prio_enabled: [bool; 8],
+    /// PFC capability (max priorities)
+    pub pfc_cap: u8,
+    /// Per-priority RX PFC pause frames received (index 0-7)
+    pub rx_pfc: [u64; 8],
+    /// Per-priority TX PFC pause frames sent (index 0-7)
+    pub tx_pfc: [u64; 8],
+    /// Global RX pause frames
+    pub rx_pause: u64,
+    /// Global TX pause frames
+    pub tx_pause: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Inventory {
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
+    /// PFC info keyed by netdev name
+    pub pfc_info: HashMap<String, PfcInfo>,
+    /// Interface counters keyed by netdev name
+    pub iface_counters: HashMap<String, IfaceCounters>,
+    /// RDMA port counters keyed by RDMA device name
+    pub rdma_counters: HashMap<String, RdmaCounters>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +106,9 @@ impl Inventory {
         Self {
             nodes: Vec::new(),
             edges: Vec::new(),
+            pfc_info: HashMap::new(),
+            iface_counters: HashMap::new(),
+            rdma_counters: HashMap::new(),
         }
     }
 
