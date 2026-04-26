@@ -159,7 +159,7 @@ fn build_counter_lines(c: Option<&IfaceCounters>, delta_secs: Option<f64>) -> Ve
         else                   { n.to_string() }
     };
     let warn = |n: u64| -> Span<'static> {
-        if n > 0 {
+        if delta_secs.is_some() && n > 0 {
             Span::styled(" (!)", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
         } else {
             Span::raw("    ")

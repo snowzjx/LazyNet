@@ -224,17 +224,17 @@ fn fmt_bytes(n: u64) -> String {
     else                   { n.to_string() }
 }
 
-fn warn(n: u64) -> Span<'static> {
-    if n > 0 { Span::styled(" (!)", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)) }
-    else     { Span::raw("    ") }
+fn warn(n: u64, is_delta: bool) -> Span<'static> {
+    if is_delta && n > 0 { Span::styled(" (!)", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)) }
+    else                 { Span::raw("    ") }
 }
 
-fn stat_line(label: &'static str, val: u64, is_error: bool) -> Line<'static> {
-    let style = if is_error && val > 0 { Style::default().fg(Color::Red) } else { Style::default() };
+fn stat_line(label: &'static str, val: u64, is_error: bool, is_delta: bool) -> Line<'static> {
+    let style = if is_error && is_delta && val > 0 { Style::default().fg(Color::Red) } else { Style::default() };
     Line::from(vec![
         Span::styled(label, Style::default().add_modifier(Modifier::BOLD)),
         Span::styled(format!("{:>12}", fmt_bytes(val)), style),
-        if is_error { warn(val) } else { Span::raw("") },
+        if is_error { warn(val, is_delta) } else { Span::raw("") },
     ])
 }
 
@@ -266,14 +266,16 @@ fn build_port_lines(c: Option<&RdmaCounters>, recording: Option<&CounterRecordin
         lines.push(Line::from(""));
     }
 
-    lines.push(stat_line("RCV data:      ", c.port_rcv_data,      false));
-    lines.push(stat_line("XMT data:      ", c.port_xmit_data,     false));
-    lines.push(stat_line("RCV packets:   ", c.port_rcv_packets,   false));
-    lines.push(stat_line("XMT packets:   ", c.port_xmit_packets,  false));
+    let is_delta = recording.map(|r| matches!(r, CounterRecording::Finished { .. })).unwrap_or(false);
+
+    lines.push(stat_line("RCV data:      ", c.port_rcv_data,      false, is_delta));
+    lines.push(stat_line("XMT data:      ", c.port_xmit_data,     false, is_delta));
+    lines.push(stat_line("RCV packets:   ", c.port_rcv_packets,   false, is_delta));
+    lines.push(stat_line("XMT packets:   ", c.port_xmit_packets,  false, is_delta));
     lines.push(Line::from(""));
-    lines.push(stat_line("RCV errors:    ", c.port_rcv_errors,    true));
-    lines.push(stat_line("XMT discards:  ", c.port_xmit_discards, true));
-    lines.push(stat_line("XMT wait:      ", c.port_xmit_wait,     true));
+    lines.push(stat_line("RCV errors:    ", c.port_rcv_errors,    true, is_delta));
+    lines.push(stat_line("XMT discards:  ", c.port_xmit_discards, true, is_delta));
+    lines.push(stat_line("XMT wait:      ", c.port_xmit_wait,     true, is_delta));
     lines
 }
 
@@ -285,20 +287,22 @@ fn build_roce_lines(c: Option<&RdmaCounters>, recording: Option<&CounterRecordin
         return vec![Line::from("No counter data")];
     };
 
+    let is_delta = recording.map(|r| matches!(r, CounterRecording::Finished { .. })).unwrap_or(false);
+
     vec![
         Line::from(Span::styled("── Congestion (ECN/CNP) ──", Style::default().fg(Color::Yellow))),
-        stat_line("NP CNP sent:       ", c.np_cnp_sent,                false),
-        stat_line("NP ECN marked:     ", c.np_ecn_marked_roce_packets, false),
-        stat_line("RP CNP handled:    ", c.rp_cnp_handled,             false),
-        stat_line("RP CNP ignored:    ", c.rp_cnp_ignored,             true),
+        stat_line("NP CNP sent:       ", c.np_cnp_sent,                false, is_delta),
+        stat_line("NP ECN marked:     ", c.np_ecn_marked_roce_packets, false, is_delta),
+        stat_line("RP CNP handled:    ", c.rp_cnp_handled,             false, is_delta),
+        stat_line("RP CNP ignored:    ", c.rp_cnp_ignored,             true,  is_delta),
         Line::from(""),
         Line::from(Span::styled("── Errors ──", Style::default().fg(Color::Yellow))),
-        stat_line("Out of buffer:     ", c.out_of_buffer,                  true),
-        stat_line("Out of sequence:   ", c.out_of_sequence,                true),
-        stat_line("Packet seq err:    ", c.packet_seq_err,                 true),
-        stat_line("RNR NAK retry:     ", c.rnr_nak_retry_err,              true),
-        stat_line("Transport retries: ", c.req_transport_retries_exceeded, true),
-        stat_line("Local ACK timeout: ", c.local_ack_timeout_err,          true),
-        stat_line("ICRC errors:       ", c.rx_icrc_encapsulated,           true),
+        stat_line("Out of buffer:     ", c.out_of_buffer,                  true, is_delta),
+        stat_line("Out of sequence:   ", c.out_of_sequence,                true, is_delta),
+        stat_line("Packet seq err:    ", c.packet_seq_err,                 true, is_delta),
+        stat_line("RNR NAK retry:     ", c.rnr_nak_retry_err,              true, is_delta),
+        stat_line("Transport retries: ", c.req_transport_retries_exceeded, true, is_delta),
+        stat_line("Local ACK timeout: ", c.local_ack_timeout_err,          true, is_delta),
+        stat_line("ICRC errors:       ", c.rx_icrc_encapsulated,           true, is_delta),
     ]
 }
