@@ -1,4 +1,9 @@
-use crate::collectors::{rdma::collect_rdma_counters, read_iface_counters};
+use crate::collectors::{
+    pci::PciCollector,
+    rdma::{collect_rdma_counters, RdmaPort},
+    read_iface_counters, Collector, NetworkCollector,
+};
+use crate::config::{CollectorConfig, UiConfig};
 use crate::data::{IfaceCounters, Inventory, NodeType, RdmaCounters};
 use anyhow::Result;
 use crossterm::{
@@ -16,12 +21,12 @@ use ratatui::{
 };
 use std::collections::HashMap;
 use std::io;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub mod interfaces;
 pub mod pci;
-pub mod rdma;
 pub mod raw;
+pub mod rdma;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Tab {
@@ -40,9 +45,22 @@ impl Tab {
             Tab::Raw => "Raw",
         }
     }
-    
-    pub fn all() -> Vec<Tab> {
-        vec![Tab::Interfaces, Tab::Rdma, Tab::Pci, Tab::Raw]
+
+    pub fn all(show_raw: bool) -> Vec<Tab> {
+        let mut tabs = vec![Tab::Interfaces, Tab::Rdma, Tab::Pci];
+        if show_raw {
+            tabs.push(Tab::Raw);
+        }
+        tabs
+    }
+
+    pub fn from_config(value: &str, show_raw: bool) -> Self {
+        match value.to_lowercase().as_str() {
+            "rdma" => Tab::Rdma,
+            "pci" => Tab::Pci,
+            "raw" if show_raw => Tab::Raw,
+            _ => Tab::Interfaces,
+        }
     }
 }
 
@@ -79,15 +97,15 @@ impl CounterRecording {
             let s = start.counters.get(dev)?;
             let e = end.counters.get(dev)?;
             Some(IfaceCounters {
-                rx_bytes:   e.rx_bytes.saturating_sub(s.rx_bytes),
-                tx_bytes:   e.tx_bytes.saturating_sub(s.tx_bytes),
+                rx_bytes: e.rx_bytes.saturating_sub(s.rx_bytes),
+                tx_bytes: e.tx_bytes.saturating_sub(s.tx_bytes),
                 rx_packets: e.rx_packets.saturating_sub(s.rx_packets),
                 tx_packets: e.tx_packets.saturating_sub(s.tx_packets),
-                rx_errors:  e.rx_errors.saturating_sub(s.rx_errors),
-                tx_errors:  e.tx_errors.saturating_sub(s.tx_errors),
+                rx_errors: e.rx_errors.saturating_sub(s.rx_errors),
+                tx_errors: e.tx_errors.saturating_sub(s.tx_errors),
                 rx_dropped: e.rx_dropped.saturating_sub(s.rx_dropped),
                 tx_dropped: e.tx_dropped.saturating_sub(s.tx_dropped),
-                rx_missed:  e.rx_missed.saturating_sub(s.rx_missed),
+                rx_missed: e.rx_missed.saturating_sub(s.rx_missed),
                 collisions: e.collisions.saturating_sub(s.collisions),
             })
         } else {
@@ -100,24 +118,32 @@ impl CounterRecording {
             let s = start.rdma_counters.get(dev)?;
             let e = end.rdma_counters.get(dev)?;
             Some(RdmaCounters {
-                port_rcv_data:                  e.port_rcv_data.saturating_sub(s.port_rcv_data),
-                port_xmit_data:                 e.port_xmit_data.saturating_sub(s.port_xmit_data),
-                port_rcv_packets:               e.port_rcv_packets.saturating_sub(s.port_rcv_packets),
-                port_xmit_packets:              e.port_xmit_packets.saturating_sub(s.port_xmit_packets),
-                port_rcv_errors:                e.port_rcv_errors.saturating_sub(s.port_rcv_errors),
-                port_xmit_discards:             e.port_xmit_discards.saturating_sub(s.port_xmit_discards),
-                port_xmit_wait:                 e.port_xmit_wait.saturating_sub(s.port_xmit_wait),
-                np_cnp_sent:                    e.np_cnp_sent.saturating_sub(s.np_cnp_sent),
-                np_ecn_marked_roce_packets:     e.np_ecn_marked_roce_packets.saturating_sub(s.np_ecn_marked_roce_packets),
-                rp_cnp_handled:                 e.rp_cnp_handled.saturating_sub(s.rp_cnp_handled),
-                rp_cnp_ignored:                 e.rp_cnp_ignored.saturating_sub(s.rp_cnp_ignored),
-                out_of_buffer:                  e.out_of_buffer.saturating_sub(s.out_of_buffer),
-                out_of_sequence:                e.out_of_sequence.saturating_sub(s.out_of_sequence),
-                packet_seq_err:                 e.packet_seq_err.saturating_sub(s.packet_seq_err),
-                rnr_nak_retry_err:              e.rnr_nak_retry_err.saturating_sub(s.rnr_nak_retry_err),
-                req_transport_retries_exceeded: e.req_transport_retries_exceeded.saturating_sub(s.req_transport_retries_exceeded),
-                local_ack_timeout_err:          e.local_ack_timeout_err.saturating_sub(s.local_ack_timeout_err),
-                rx_icrc_encapsulated:           e.rx_icrc_encapsulated.saturating_sub(s.rx_icrc_encapsulated),
+                port_rcv_data: e.port_rcv_data.saturating_sub(s.port_rcv_data),
+                port_xmit_data: e.port_xmit_data.saturating_sub(s.port_xmit_data),
+                port_rcv_packets: e.port_rcv_packets.saturating_sub(s.port_rcv_packets),
+                port_xmit_packets: e.port_xmit_packets.saturating_sub(s.port_xmit_packets),
+                port_rcv_errors: e.port_rcv_errors.saturating_sub(s.port_rcv_errors),
+                port_xmit_discards: e.port_xmit_discards.saturating_sub(s.port_xmit_discards),
+                port_xmit_wait: e.port_xmit_wait.saturating_sub(s.port_xmit_wait),
+                np_cnp_sent: e.np_cnp_sent.saturating_sub(s.np_cnp_sent),
+                np_ecn_marked_roce_packets: e
+                    .np_ecn_marked_roce_packets
+                    .saturating_sub(s.np_ecn_marked_roce_packets),
+                rp_cnp_handled: e.rp_cnp_handled.saturating_sub(s.rp_cnp_handled),
+                rp_cnp_ignored: e.rp_cnp_ignored.saturating_sub(s.rp_cnp_ignored),
+                out_of_buffer: e.out_of_buffer.saturating_sub(s.out_of_buffer),
+                out_of_sequence: e.out_of_sequence.saturating_sub(s.out_of_sequence),
+                packet_seq_err: e.packet_seq_err.saturating_sub(s.packet_seq_err),
+                rnr_nak_retry_err: e.rnr_nak_retry_err.saturating_sub(s.rnr_nak_retry_err),
+                req_transport_retries_exceeded: e
+                    .req_transport_retries_exceeded
+                    .saturating_sub(s.req_transport_retries_exceeded),
+                local_ack_timeout_err: e
+                    .local_ack_timeout_err
+                    .saturating_sub(s.local_ack_timeout_err),
+                rx_icrc_encapsulated: e
+                    .rx_icrc_encapsulated
+                    .saturating_sub(s.rx_icrc_encapsulated),
             })
         } else {
             None
@@ -132,28 +158,37 @@ pub struct Ui {
     search_mode: bool,
     selected_index: usize,
     pub recording: Option<CounterRecording>,
+    refresh_interval: Duration,
+    show_raw_tab: bool,
 }
 
 impl Ui {
-    pub fn new() -> Self {
+    pub fn new(config: &UiConfig) -> Self {
+        let show_raw_tab = config.show_raw_tab;
         Self {
-            current_tab: Tab::Interfaces,
+            current_tab: Tab::from_config(&config.default_tab, show_raw_tab),
             search_query: String::new(),
             show_help: false,
             search_mode: false,
             selected_index: 0,
             recording: None,
+            refresh_interval: Duration::from_millis(config.refresh_interval_ms.max(100)),
+            show_raw_tab,
         }
     }
 
-    pub async fn run(&mut self, inventory: &Inventory) -> Result<()> {
+    pub async fn run(
+        &mut self,
+        inventory: &mut Inventory,
+        collectors: CollectorConfig,
+    ) -> Result<()> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
-        let result = self.run_app(&mut terminal, inventory).await;
+        let result = self.run_app(&mut terminal, inventory, &collectors).await;
 
         disable_raw_mode()?;
         execute!(
@@ -169,12 +204,20 @@ impl Ui {
     async fn run_app<B: Backend>(
         &mut self,
         terminal: &mut Terminal<B>,
-        inventory: &Inventory,
+        inventory: &mut Inventory,
+        collectors: &CollectorConfig,
     ) -> Result<()> {
+        let mut last_refresh = Instant::now();
         loop {
             terminal.draw(|f| self.draw(f, inventory))?;
 
-            if let Event::Key(key) = event::read()? {
+            let elapsed = last_refresh.elapsed();
+            let timeout = self.refresh_interval.saturating_sub(elapsed);
+
+            if event::poll(timeout)? {
+                let Event::Key(key) = event::read()? else {
+                    continue;
+                };
                 if self.search_mode {
                     match key.code {
                         KeyCode::Enter => {
@@ -222,14 +265,17 @@ impl Ui {
                             self.selected_index = 0;
                         }
                         KeyCode::Char('4') => {
-                            self.current_tab = Tab::Raw;
-                            self.selected_index = 0;
+                            if self.show_raw_tab {
+                                self.current_tab = Tab::Raw;
+                                self.selected_index = 0;
+                            }
                         }
                         KeyCode::Char('/') => {
                             self.search_mode = true;
                         }
                         KeyCode::Char('[') => {
-                            self.recording = Some(CounterRecording::Started(live_snapshot(inventory)));
+                            self.recording =
+                                Some(CounterRecording::Started(live_snapshot(inventory)));
                         }
                         KeyCode::Char(']') => {
                             if let Some(CounterRecording::Started(start)) = self.recording.take() {
@@ -258,6 +304,13 @@ impl Ui {
                         _ => {}
                     }
                 }
+                if last_refresh.elapsed() >= self.refresh_interval {
+                    refresh_inventory(inventory, collectors).await?;
+                    last_refresh = Instant::now();
+                }
+            } else {
+                refresh_inventory(inventory, collectors).await?;
+                last_refresh = Instant::now();
             }
         }
     }
@@ -277,7 +330,11 @@ impl Ui {
             .constraints([
                 Constraint::Length(3), // Tabs
                 Constraint::Min(0),    // Content
-                if self.search_mode { Constraint::Length(3) } else { Constraint::Length(0) }, // Search
+                if self.search_mode {
+                    Constraint::Length(3)
+                } else {
+                    Constraint::Length(0)
+                }, // Search
             ])
             .split(main_chunks[0]);
 
@@ -297,12 +354,10 @@ impl Ui {
     }
 
     fn draw_tabs(&self, f: &mut Frame, area: Rect) {
-        let titles: Vec<Line> = Tab::all()
-            .iter()
-            .map(|tab| Line::from(tab.as_str()))
-            .collect();
+        let tabs = Tab::all(self.show_raw_tab);
+        let titles: Vec<Line> = tabs.iter().map(|tab| Line::from(tab.as_str())).collect();
 
-        let selected_index = Tab::all()
+        let selected_index = tabs
             .iter()
             .position(|&tab| tab == self.current_tab)
             .unwrap_or(0);
@@ -322,8 +377,22 @@ impl Ui {
 
     fn draw_content(&self, f: &mut Frame, area: Rect, inventory: &Inventory) {
         match self.current_tab {
-            Tab::Interfaces => interfaces::draw(f, area, inventory, &self.search_query, self.selected_index, self.recording.as_ref()),
-            Tab::Rdma => rdma::draw(f, area, inventory, &self.search_query, self.selected_index, self.recording.as_ref()),
+            Tab::Interfaces => interfaces::draw(
+                f,
+                area,
+                inventory,
+                &self.search_query,
+                self.selected_index,
+                self.recording.as_ref(),
+            ),
+            Tab::Rdma => rdma::draw(
+                f,
+                area,
+                inventory,
+                &self.search_query,
+                self.selected_index,
+                self.recording.as_ref(),
+            ),
             Tab::Pci => pci::draw(f, area, inventory, &self.search_query, self.selected_index),
             Tab::Raw => raw::draw(f, area, inventory, &self.search_query),
         }
@@ -332,13 +401,42 @@ impl Ui {
     fn current_list_len(&self, inventory: &Inventory) -> usize {
         let q = self.search_query.to_lowercase();
         match self.current_tab {
-            Tab::Interfaces => inventory.get_nodes_by_type(&NodeType::NetworkInterface)
-                .iter().filter(|n| q.is_empty() || n.get_property("name").map(|v| v.to_lowercase().contains(&q)).unwrap_or(false)).count(),
-            Tab::Rdma => inventory.get_nodes_by_type(&NodeType::RdmaDevice)
-                .iter().filter(|n| q.is_empty() || n.get_property("name").map(|v| v.to_lowercase().contains(&q)).unwrap_or(false)).count(),
-            Tab::Pci => inventory.get_nodes_by_type(&NodeType::PciDevice)
-                .iter().filter(|n| q.is_empty() || ["pci_id","vendor","device","class","driver"].iter()
-                    .any(|k| n.get_property(k).map(|v| v.to_lowercase().contains(&q)).unwrap_or(false))).count(),
+            Tab::Interfaces => inventory
+                .get_nodes_by_type(&NodeType::NetworkInterface)
+                .iter()
+                .filter(|n| {
+                    q.is_empty()
+                        || n.get_property("name")
+                            .map(|v| v.to_lowercase().contains(&q))
+                            .unwrap_or(false)
+                })
+                .count(),
+            Tab::Rdma => inventory
+                .get_nodes_by_type(&NodeType::RdmaDevice)
+                .iter()
+                .filter(|n| {
+                    q.is_empty()
+                        || ["name", "display_name", "port"].iter().any(|key| {
+                            n.get_property(key)
+                                .map(|v| v.to_lowercase().contains(&q))
+                                .unwrap_or(false)
+                        })
+                })
+                .count(),
+            Tab::Pci => inventory
+                .get_nodes_by_type(&NodeType::PciDevice)
+                .iter()
+                .filter(|n| {
+                    q.is_empty()
+                        || ["pci_id", "vendor", "device", "class", "driver"]
+                            .iter()
+                            .any(|k| {
+                                n.get_property(k)
+                                    .map(|v| v.to_lowercase().contains(&q))
+                                    .unwrap_or(false)
+                            })
+                })
+                .count(),
             Tab::Raw => 0,
         }
     }
@@ -359,7 +457,10 @@ impl Ui {
                 Span::raw(" - Toggle help"),
             ]),
             Line::from(vec![
-                Span::styled("Tab/Shift+Tab", Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "Tab/Shift+Tab",
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(" - Switch tabs"),
             ]),
             Line::from(vec![
@@ -416,8 +517,10 @@ impl Ui {
 
     fn draw_status_bar(&self, f: &mut Frame, area: Rect) {
         let (text, style) = if self.search_mode {
-            ("Enter: Apply search | Esc: Cancel | Type to search".into(),
-             Style::default().bg(Color::DarkGray).fg(Color::White))
+            (
+                "Enter: Apply search | Esc: Cancel | Type to search".into(),
+                Style::default().bg(Color::DarkGray).fg(Color::White),
+            )
         } else {
             match &self.recording {
                 Some(CounterRecording::Started(_)) => (
@@ -439,15 +542,21 @@ impl Ui {
     }
 
     fn next_tab(&mut self) {
-        let tabs = Tab::all();
-        let current_index = tabs.iter().position(|&tab| tab == self.current_tab).unwrap_or(0);
+        let tabs = Tab::all(self.show_raw_tab);
+        let current_index = tabs
+            .iter()
+            .position(|&tab| tab == self.current_tab)
+            .unwrap_or(0);
         let next_index = (current_index + 1) % tabs.len();
         self.current_tab = tabs[next_index];
     }
 
     fn prev_tab(&mut self) {
-        let tabs = Tab::all();
-        let current_index = tabs.iter().position(|&tab| tab == self.current_tab).unwrap_or(0);
+        let tabs = Tab::all(self.show_raw_tab);
+        let current_index = tabs
+            .iter()
+            .position(|&tab| tab == self.current_tab)
+            .unwrap_or(0);
         let prev_index = if current_index == 0 {
             tabs.len() - 1
         } else {
@@ -469,11 +578,34 @@ fn live_snapshot(inventory: &Inventory) -> CounterSnapshot {
     let rdma_counters = inventory
         .get_nodes_by_type(&NodeType::RdmaDevice)
         .iter()
-        .filter_map(|n| n.get_property("name"))
-        .map(|name| (name.clone(), collect_rdma_counters(name)))
+        .filter_map(|n| RdmaPort::from_node(n))
+        .map(|port| (port.key(), collect_rdma_counters(&port.device, &port.port)))
         .collect();
 
-    CounterSnapshot { counters, rdma_counters, taken_at: Instant::now() }
+    CounterSnapshot {
+        counters,
+        rdma_counters,
+        taken_at: Instant::now(),
+    }
+}
+
+async fn refresh_inventory(inventory: &mut Inventory, config: &CollectorConfig) -> Result<()> {
+    let mut next = Inventory::new();
+
+    if config.enable_network {
+        NetworkCollector::new().collect(&mut next).await?;
+    }
+    if config.enable_pci {
+        PciCollector::new().collect(&mut next).await?;
+    }
+    if config.enable_rdma {
+        crate::collectors::rdma::RdmaCollector::new()
+            .collect(&mut next)
+            .await?;
+    }
+
+    *inventory = next;
+    Ok(())
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

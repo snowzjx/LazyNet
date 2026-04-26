@@ -17,12 +17,13 @@ impl NetworkCollector {
         Self
     }
 
+    #[cfg(target_os = "macos")]
     fn parse_ifconfig_output(&self, output: &str) -> Vec<Node> {
         let mut nodes = Vec::new();
         let mut current_interface: Option<String> = None;
         let mut current_flags: Option<String> = None;
         let mut current_mtu: Option<String> = None;
-        
+
         for line in output.lines() {
             if !line.starts_with('\t') && !line.starts_with(' ') && line.contains(':') {
                 // Save previous interface if exists
@@ -46,18 +47,18 @@ impl NetworkCollector {
 
                     nodes.push(node);
                 }
-                
+
                 // Parse new interface line
                 if let Some(colon_pos) = line.find(':') {
                     current_interface = Some(line[..colon_pos].to_string());
-                    
+
                     // Parse flags
                     if let Some(flags_start) = line.find('<') {
                         if let Some(flags_end) = line.find('>') {
                             current_flags = Some(line[flags_start + 1..flags_end].to_string());
                         }
                     }
-                    
+
                     // Parse MTU
                     if let Some(mtu_pos) = line.find("mtu ") {
                         let mtu_part = &line[mtu_pos + 4..];
@@ -70,7 +71,7 @@ impl NetworkCollector {
                 }
             }
         }
-        
+
         // Don't forget the last interface
         if let Some(interface_name) = current_interface {
             let mut node = Node::new(
@@ -92,23 +93,24 @@ impl NetworkCollector {
 
             nodes.push(node);
         }
-        
+
         nodes
     }
 
+    #[cfg(target_os = "linux")]
     fn parse_ip_output(&self, output: &str) -> Vec<Node> {
         let mut nodes = Vec::new();
-        
+
         for line in output.lines() {
             if line.trim().is_empty() || line.starts_with(' ') {
                 continue;
             }
-            
+
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() < 2 {
                 continue;
             }
-            
+
             let interface_name = parts[1].trim_end_matches(':');
             let mut node = Node::new(
                 format!("netdev:{}", interface_name),
@@ -122,7 +124,7 @@ impl NetworkCollector {
                 if let Some(flags_end) = line.find('>') {
                     let flags = &line[flags_start + 1..flags_end];
                     node = node.with_property("flags", flags);
-                    
+
                     let state = if flags.contains("UP") { "up" } else { "down" };
                     node = node.with_property("state", state);
                 }
@@ -141,22 +143,20 @@ impl NetworkCollector {
 
             nodes.push(node);
         }
-        
+
         nodes
     }
 
     async fn get_mac_addresses(&self) -> Result<std::collections::HashMap<String, String>> {
         let mut mac_map = std::collections::HashMap::new();
-        
+
         #[cfg(target_os = "linux")]
         {
-            let output = Command::new("ip")
-                .args(&["link", "show"])
-                .output()?;
-            
+            let output = Command::new("ip").args(&["link", "show"]).output()?;
+
             let stdout = String::from_utf8_lossy(&output.stdout);
             let mut current_interface = None;
-            
+
             for line in stdout.lines() {
                 if !line.starts_with(' ') {
                     // New interface line
@@ -175,15 +175,14 @@ impl NetworkCollector {
                 }
             }
         }
-        
+
         #[cfg(target_os = "macos")]
         {
-            let output = Command::new("ifconfig")
-                .output()?;
-            
+            let output = Command::new("ifconfig").output()?;
+
             let stdout = String::from_utf8_lossy(&output.stdout);
             let mut current_interface = None;
-            
+
             for line in stdout.lines() {
                 if !line.starts_with('\t') && !line.starts_with(' ') && line.contains(':') {
                     // New interface line
@@ -203,7 +202,7 @@ impl NetworkCollector {
                 }
             }
         }
-        
+
         Ok(mac_map)
     }
 }
@@ -211,25 +210,22 @@ impl NetworkCollector {
 impl Collector for NetworkCollector {
     async fn collect(&self, inventory: &mut Inventory) -> Result<()> {
         #[cfg(target_os = "linux")]
-        let output = Command::new("ip")
-            .args(&["addr", "show"])
-            .output()?;
-            
+        let output = Command::new("ip").args(&["addr", "show"]).output()?;
+
         #[cfg(target_os = "macos")]
-        let output = Command::new("ifconfig")
-            .output()?;
+        let output = Command::new("ifconfig").output()?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        
+
         #[cfg(target_os = "linux")]
         let mut nodes = self.parse_ip_output(&stdout);
-        
+
         #[cfg(target_os = "macos")]
         let mut nodes = self.parse_ifconfig_output(&stdout);
-        
+
         // Get MAC addresses
         let mac_addresses = self.get_mac_addresses().await?;
-        
+
         // Add MAC addresses to nodes
         for node in &mut nodes {
             if let Some(name) = node.get_property("name") {
@@ -238,14 +234,16 @@ impl Collector for NetworkCollector {
                 }
             }
         }
-        
+
         for node in nodes {
             if let Some(name) = node.get_property("name") {
-                inventory.iface_counters.insert(name.clone(), read_iface_counters(name));
+                inventory
+                    .iface_counters
+                    .insert(name.clone(), read_iface_counters(name));
             }
             inventory.add_node(node);
         }
-        
+
         Ok(())
     }
 }
@@ -259,15 +257,15 @@ fn read_stat(dev: &str, stat: &str) -> u64 {
 
 pub fn read_iface_counters(dev: &str) -> IfaceCounters {
     IfaceCounters {
-        rx_bytes:   read_stat(dev, "rx_bytes"),
-        tx_bytes:   read_stat(dev, "tx_bytes"),
+        rx_bytes: read_stat(dev, "rx_bytes"),
+        tx_bytes: read_stat(dev, "tx_bytes"),
         rx_packets: read_stat(dev, "rx_packets"),
         tx_packets: read_stat(dev, "tx_packets"),
-        rx_errors:  read_stat(dev, "rx_errors"),
-        tx_errors:  read_stat(dev, "tx_errors"),
+        rx_errors: read_stat(dev, "rx_errors"),
+        tx_errors: read_stat(dev, "tx_errors"),
         rx_dropped: read_stat(dev, "rx_dropped"),
         tx_dropped: read_stat(dev, "tx_dropped"),
-        rx_missed:  read_stat(dev, "rx_missed_errors"),
+        rx_missed: read_stat(dev, "rx_missed_errors"),
         collisions: read_stat(dev, "collisions"),
     }
 }

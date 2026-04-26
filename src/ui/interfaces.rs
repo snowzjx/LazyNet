@@ -42,9 +42,18 @@ pub fn draw(
     let items: Vec<ListItem> = filtered
         .iter()
         .map(|node| {
-            let name = node.get_property("name").cloned().unwrap_or_else(|| "N/A".into());
-            let state = node.get_property("state").cloned().unwrap_or_else(|| "unknown".into());
-            let mac = node.get_property("mac").cloned().unwrap_or_else(|| "N/A".into());
+            let name = node
+                .get_property("name")
+                .cloned()
+                .unwrap_or_else(|| "N/A".into());
+            let state = node
+                .get_property("state")
+                .cloned()
+                .unwrap_or_else(|| "unknown".into());
+            let mac = node
+                .get_property("mac")
+                .cloned()
+                .unwrap_or_else(|| "N/A".into());
             let content = format!("{} ({}) - {}", name, state, mac);
             let style = match state.as_str() {
                 "up" => Style::default().fg(Color::Green),
@@ -55,11 +64,18 @@ pub fn draw(
         })
         .collect();
 
-    let total = inventory.get_nodes_by_type(&NodeType::NetworkInterface).len();
+    let total = inventory
+        .get_nodes_by_type(&NodeType::NetworkInterface)
+        .len();
     let title = if search_query.is_empty() {
         format!("Network Interfaces ({})", filtered.len())
     } else {
-        format!("Network Interfaces ({}/{}) - Search: '{}'", filtered.len(), total, search_query)
+        format!(
+            "Network Interfaces ({}/{}) - Search: '{}'",
+            filtered.len(),
+            total,
+            search_query
+        )
     };
 
     let mut list_state = ListState::default();
@@ -87,7 +103,10 @@ pub fn draw(
     }
 
     let node = filtered[selected_index];
-    let name = node.get_property("name").map(|s| s.as_str()).unwrap_or("N/A");
+    let name = node
+        .get_property("name")
+        .map(|s| s.as_str())
+        .unwrap_or("N/A");
 
     let detail_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -97,16 +116,40 @@ pub fn draw(
     // Properties
     let props = [
         format!("Name:   {}", name),
-        format!("State:  {}", node.get_property("state").map(|s| s.as_str()).unwrap_or("unknown")),
-        format!("MAC:    {}", node.get_property("mac").map(|s| s.as_str()).unwrap_or("N/A")),
-        format!("MTU:    {}", node.get_property("mtu").map(|s| s.as_str()).unwrap_or("N/A")),
-        format!("Flags:  {}", node.get_property("flags").map(|s| s.as_str()).unwrap_or("N/A")),
+        format!(
+            "State:  {}",
+            node.get_property("state")
+                .map(|s| s.as_str())
+                .unwrap_or("unknown")
+        ),
+        format!(
+            "MAC:    {}",
+            node.get_property("mac")
+                .map(|s| s.as_str())
+                .unwrap_or("N/A")
+        ),
+        format!(
+            "MTU:    {}",
+            node.get_property("mtu")
+                .map(|s| s.as_str())
+                .unwrap_or("N/A")
+        ),
+        format!(
+            "Flags:  {}",
+            node.get_property("flags")
+                .map(|s| s.as_str())
+                .unwrap_or("N/A")
+        ),
     ]
     .join("\n");
 
     f.render_widget(
         Paragraph::new(props)
-            .block(Block::default().borders(Borders::ALL).title("Interface Details"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Interface Details"),
+            )
             .wrap(Wrap { trim: true })
             .style(Style::default().fg(Color::White)),
         detail_chunks[0],
@@ -119,17 +162,17 @@ pub fn draw(
                 "● Recording started — press ] to finish",
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             ))];
-            ("Counters [RECORDING]", lines, Style::default().fg(Color::White))
+            (
+                "Counters [RECORDING]",
+                lines,
+                Style::default().fg(Color::White),
+            )
         }
         Some(CounterRecording::Finished { .. }) => {
             let secs = recording.unwrap().delta_secs();
             let delta = recording.unwrap().delta(name);
             let lines = build_counter_lines(delta.as_ref(), Some(secs));
-            (
-                "Counters [DELTA]",
-                lines,
-                Style::default().fg(Color::White),
-            )
+            ("Counters [DELTA]", lines, Style::default().fg(Color::White))
         }
         None => {
             let current = inventory.iface_counters.get(name);
@@ -153,14 +196,22 @@ fn build_counter_lines(c: Option<&IfaceCounters>, delta_secs: Option<f64>) -> Ve
     };
 
     let fmt = |n: u64| -> String {
-        if n >= 1_000_000_000 { format!("{:.2}G", n as f64 / 1e9) }
-        else if n >= 1_000_000 { format!("{:.2}M", n as f64 / 1e6) }
-        else if n >= 1_000     { format!("{:.2}K", n as f64 / 1e3) }
-        else                   { n.to_string() }
+        if n >= 1_000_000_000 {
+            format!("{:.2}G", n as f64 / 1e9)
+        } else if n >= 1_000_000 {
+            format!("{:.2}M", n as f64 / 1e6)
+        } else if n >= 1_000 {
+            format!("{:.2}K", n as f64 / 1e3)
+        } else {
+            n.to_string()
+        }
     };
     let warn = |n: u64| -> Span<'static> {
         if delta_secs.is_some() && n > 0 {
-            Span::styled(" (!)", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+            Span::styled(
+                " (!)",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            )
         } else {
             Span::raw("    ")
         }
@@ -168,14 +219,19 @@ fn build_counter_lines(c: Option<&IfaceCounters>, delta_secs: Option<f64>) -> Ve
 
     let mut lines: Vec<Line<'static>> = Vec::new();
 
-    if let Some(secs) = delta_secs {
+    if let Some(secs) = delta_secs.filter(|secs| *secs > 0.0) {
         let rx_bps = c.rx_bytes as f64 / secs;
         let tx_bps = c.tx_bytes as f64 / secs;
         let fmt_rate = |bps: f64| -> String {
-            if bps >= 1e9 { format!("{:.2} Gbps", bps * 8.0 / 1e9) }
-            else if bps >= 1e6 { format!("{:.2} Mbps", bps * 8.0 / 1e6) }
-            else if bps >= 1e3 { format!("{:.2} Kbps", bps * 8.0 / 1e3) }
-            else { format!("{:.0} bps", bps * 8.0) }
+            if bps >= 1e9 {
+                format!("{:.2} Gbps", bps * 8.0 / 1e9)
+            } else if bps >= 1e6 {
+                format!("{:.2} Mbps", bps * 8.0 / 1e6)
+            } else if bps >= 1e3 {
+                format!("{:.2} Kbps", bps * 8.0 / 1e3)
+            } else {
+                format!("{:.0} bps", bps * 8.0)
+            }
         };
         lines.push(Line::from(vec![
             Span::styled("Duration: ", Style::default().add_modifier(Modifier::BOLD)),
@@ -203,11 +259,31 @@ fn build_counter_lines(c: Option<&IfaceCounters>, delta_secs: Option<f64>) -> Ve
         ])
     };
 
-    lines.push(row("RX bytes:   ", c.rx_bytes,   "TX bytes:   ", c.tx_bytes));
-    lines.push(row("RX packets: ", c.rx_packets, "TX packets: ", c.tx_packets));
-    lines.push(row("RX errors:  ", c.rx_errors,  "TX errors:  ", c.tx_errors));
-    lines.push(row("RX dropped: ", c.rx_dropped, "TX dropped: ", c.tx_dropped));
-    lines.push(row("RX missed:  ", c.rx_missed,  "Collisions: ", c.collisions));
+    lines.push(row("RX bytes:   ", c.rx_bytes, "TX bytes:   ", c.tx_bytes));
+    lines.push(row(
+        "RX packets: ",
+        c.rx_packets,
+        "TX packets: ",
+        c.tx_packets,
+    ));
+    lines.push(row(
+        "RX errors:  ",
+        c.rx_errors,
+        "TX errors:  ",
+        c.tx_errors,
+    ));
+    lines.push(row(
+        "RX dropped: ",
+        c.rx_dropped,
+        "TX dropped: ",
+        c.tx_dropped,
+    ));
+    lines.push(row(
+        "RX missed:  ",
+        c.rx_missed,
+        "Collisions: ",
+        c.collisions,
+    ));
 
     lines
 }

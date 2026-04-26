@@ -5,6 +5,33 @@ use std::process::Command;
 
 pub struct RdmaCollector;
 
+#[derive(Debug, Clone)]
+pub struct RdmaPort {
+    pub device: String,
+    pub port: String,
+}
+
+impl RdmaPort {
+    pub fn new(device: String, port: String) -> Self {
+        Self { device, port }
+    }
+
+    pub fn key(&self) -> String {
+        format!("{}/{}", self.device, self.port)
+    }
+
+    pub fn label(&self) -> String {
+        format!("{}:{}", self.device, self.port)
+    }
+
+    pub fn from_node(node: &Node) -> Option<Self> {
+        Some(Self {
+            device: node.get_property("name")?.clone(),
+            port: node.get_property("port")?.clone(),
+        })
+    }
+}
+
 impl RdmaCollector {
     pub fn new() -> Self {
         Self
@@ -29,27 +56,37 @@ impl RdmaCollector {
 
         for entry in entries.flatten() {
             let device_name = entry.file_name().to_string_lossy().to_string();
+            let ports_path = entry.path().join("ports");
+            let Ok(ports) = std::fs::read_dir(&ports_path) else {
+                continue;
+            };
 
-            let transport = std::fs::read_to_string(
-                format!("/sys/class/infiniband/{}/ports/1/link_layer", device_name),
-            )
-            .map(|s| match s.trim() {
-                "InfiniBand" => "InfiniBand",
-                "Ethernet" => "RoCE",
-                _ => "Unknown",
-            })
-            .unwrap_or("Unknown");
+            for port_entry in ports.flatten() {
+                let port = port_entry.file_name().to_string_lossy().to_string();
+                let rdma_port = RdmaPort::new(device_name.clone(), port.clone());
+                let transport = std::fs::read_to_string(format!(
+                    "/sys/class/infiniband/{}/ports/{}/link_layer",
+                    device_name, port
+                ))
+                .map(|s| match s.trim() {
+                    "InfiniBand" => "InfiniBand",
+                    "Ethernet" => "RoCE",
+                    _ => "Unknown",
+                })
+                .unwrap_or("Unknown");
 
-            let mut node = Node::new(format!("rdma:{}", device_name), NodeType::RdmaDevice)
-                .with_property("name", &device_name)
-                .with_property("transport", transport);
+                let mut node = Node::new(format!("rdma:{}", rdma_port.key()), NodeType::RdmaDevice)
+                    .with_property("name", &device_name)
+                    .with_property("port", &port)
+                    .with_property("display_name", &rdma_port.label())
+                    .with_property("transport", transport);
 
-            // Enrich from ibv_devinfo block for this device
-            if !devinfo.is_empty() {
-                enrich_from_devinfo(&mut node, &devinfo, &device_name);
+                if !devinfo.is_empty() {
+                    enrich_from_devinfo(&mut node, &devinfo, &device_name);
+                }
+
+                nodes.push(node);
             }
-
-            nodes.push(node);
         }
 
         nodes
@@ -68,15 +105,13 @@ impl RdmaCollector {
                     if parts.len() < 2 {
                         continue;
                     }
-                    // parts[1] is "mlx5_0/1"
-                    let rdma_dev = parts[1].split('/').next().unwrap_or("");
-                    if rdma_dev.is_empty() {
+                    let Some((rdma_dev, port)) = parts[1].split_once('/') else {
                         continue;
-                    }
+                    };
                     if let Some(nd_pos) = parts.iter().position(|&p| p == "netdev") {
                         if let Some(netdev) = parts.get(nd_pos + 1) {
                             edges.push(Edge::new(
-                                format!("rdma:{}", rdma_dev),
+                                format!("rdma:{}/{}", rdma_dev, port),
                                 format!("netdev:{}", netdev),
                                 EdgeType::RdmaMapping,
                             ));
@@ -95,12 +130,13 @@ impl RdmaCollector {
                 let ports_path = ib_entry.path().join("ports");
                 if let Ok(ports) = std::fs::read_dir(&ports_path) {
                     for port in ports.flatten() {
+                        let port_id = port.file_name().to_string_lossy().to_string();
                         let ndev_path = port.path().join("gid_attrs/ndevs/0");
                         if let Ok(netdev) = std::fs::read_to_string(&ndev_path) {
                             let netdev = netdev.trim();
                             if !netdev.is_empty() {
                                 edges.push(Edge::new(
-                                    format!("rdma:{}", rdma_dev),
+                                    format!("rdma:{}/{}", rdma_dev, port_id),
                                     format!("netdev:{}", netdev),
                                     EdgeType::RdmaMapping,
                                 ));
@@ -150,38 +186,38 @@ fn enrich_from_devinfo(node: &mut Node, devinfo: &str, device_name: &str) {
 }
 
 /// Read a single sysfs counter file, returning 0 on failure.
-fn read_rdma_stat(dev: &str, subdir: &str, name: &str) -> u64 {
+fn read_rdma_stat(dev: &str, port: &str, subdir: &str, name: &str) -> u64 {
     std::fs::read_to_string(format!(
-        "/sys/class/infiniband/{}/ports/1/{}/{}",
-        dev, subdir, name
+        "/sys/class/infiniband/{}/ports/{}/{}/{}",
+        dev, port, subdir, name
     ))
     .ok()
     .and_then(|s| s.trim().parse().ok())
     .unwrap_or(0)
 }
 
-pub fn collect_rdma_counters(dev: &str) -> RdmaCounters {
-    let c = |name: &str| read_rdma_stat(dev, "counters", name);
-    let h = |name: &str| read_rdma_stat(dev, "hw_counters", name);
+pub fn collect_rdma_counters(dev: &str, port: &str) -> RdmaCounters {
+    let c = |name: &str| read_rdma_stat(dev, port, "counters", name);
+    let h = |name: &str| read_rdma_stat(dev, port, "hw_counters", name);
     RdmaCounters {
-        port_rcv_data:                  c("port_rcv_data"),
-        port_xmit_data:                 c("port_xmit_data"),
-        port_rcv_packets:               c("port_rcv_packets"),
-        port_xmit_packets:              c("port_xmit_packets"),
-        port_rcv_errors:                c("port_rcv_errors"),
-        port_xmit_discards:             c("port_xmit_discards"),
-        port_xmit_wait:                 c("port_xmit_wait"),
-        np_cnp_sent:                    h("np_cnp_sent"),
-        np_ecn_marked_roce_packets:     h("np_ecn_marked_roce_packets"),
-        rp_cnp_handled:                 h("rp_cnp_handled"),
-        rp_cnp_ignored:                 h("rp_cnp_ignored"),
-        out_of_buffer:                  h("out_of_buffer"),
-        out_of_sequence:                h("out_of_sequence"),
-        packet_seq_err:                 h("packet_seq_err"),
-        rnr_nak_retry_err:              h("rnr_nak_retry_err"),
+        port_rcv_data: c("port_rcv_data"),
+        port_xmit_data: c("port_xmit_data"),
+        port_rcv_packets: c("port_rcv_packets"),
+        port_xmit_packets: c("port_xmit_packets"),
+        port_rcv_errors: c("port_rcv_errors"),
+        port_xmit_discards: c("port_xmit_discards"),
+        port_xmit_wait: c("port_xmit_wait"),
+        np_cnp_sent: h("np_cnp_sent"),
+        np_ecn_marked_roce_packets: h("np_ecn_marked_roce_packets"),
+        rp_cnp_handled: h("rp_cnp_handled"),
+        rp_cnp_ignored: h("rp_cnp_ignored"),
+        out_of_buffer: h("out_of_buffer"),
+        out_of_sequence: h("out_of_sequence"),
+        packet_seq_err: h("packet_seq_err"),
+        rnr_nak_retry_err: h("rnr_nak_retry_err"),
         req_transport_retries_exceeded: h("req_transport_retries_exceeded"),
-        local_ack_timeout_err:          h("local_ack_timeout_err"),
-        rx_icrc_encapsulated:           h("rx_icrc_encapsulated"),
+        local_ack_timeout_err: h("local_ack_timeout_err"),
+        rx_icrc_encapsulated: h("rx_icrc_encapsulated"),
     }
 }
 
@@ -192,7 +228,10 @@ fn collect_pfc(netdev: &str) -> PfcInfo {
     // --- dcb pfc show dev <netdev> ---
     // Output: "pfc-cap 8 macsec-bypass off delay 7"
     //         "prio-pfc 0:off 1:off 2:on ..."
-    if let Ok(out) = Command::new("dcb").args(["pfc", "show", "dev", netdev]).output() {
+    if let Ok(out) = Command::new("dcb")
+        .args(["pfc", "show", "dev", netdev])
+        .output()
+    {
         for line in String::from_utf8_lossy(&out.stdout).lines() {
             let line = line.trim();
             if line.starts_with("pfc-cap") {
@@ -219,13 +258,19 @@ fn collect_pfc(netdev: &str) -> PfcInfo {
         for line in String::from_utf8_lossy(&out.stdout).lines() {
             let line = line.trim();
             // rx_prioN_packets / tx_prioN_packets
-            for (prefix, arr) in [("rx_prio", &mut info.rx_pfc as &mut [u64; 8]),
-                                   ("tx_prio", &mut info.tx_pfc as &mut [u64; 8])] {
+            for (prefix, arr) in [
+                ("rx_prio", &mut info.rx_pfc as &mut [u64; 8]),
+                ("tx_prio", &mut info.tx_pfc as &mut [u64; 8]),
+            ] {
                 if let Some(rest) = line.strip_prefix(prefix) {
                     // rest = "0_packets: 12345"
                     if let Some((prio_s, val_s)) = rest.split_once("_packets:") {
-                        if let (Ok(p), Ok(v)) = (prio_s.parse::<usize>(), val_s.trim().parse::<u64>()) {
-                            if p < 8 { arr[p] = v; }
+                        if let (Ok(p), Ok(v)) =
+                            (prio_s.parse::<usize>(), val_s.trim().parse::<u64>())
+                        {
+                            if p < 8 {
+                                arr[p] = v;
+                            }
                         }
                     }
                 }
@@ -245,15 +290,19 @@ fn collect_pfc(netdev: &str) -> PfcInfo {
 impl Collector for RdmaCollector {
     async fn collect(&self, inventory: &mut Inventory) -> Result<()> {
         for node in self.collect_devices() {
-            if let Some(name) = node.properties.get("name") {
-                inventory.rdma_counters.insert(name.clone(), collect_rdma_counters(name));
+            if let Some(port) = RdmaPort::from_node(&node) {
+                inventory
+                    .rdma_counters
+                    .insert(port.key(), collect_rdma_counters(&port.device, &port.port));
             }
             inventory.add_node(node);
         }
         for edge in self.collect_edges() {
             // Collect PFC for the netdev side of each RDMA→netdev edge
             if let Some(netdev) = edge.to.strip_prefix("netdev:") {
-                inventory.pfc_info.entry(netdev.to_string())
+                inventory
+                    .pfc_info
+                    .entry(netdev.to_string())
                     .or_insert_with(|| collect_pfc(netdev));
             }
             inventory.add_edge(edge);

@@ -123,7 +123,9 @@ impl Inventory {
     pub fn get_nodes_by_type(&self, node_type: &NodeType) -> Vec<&Node> {
         self.nodes
             .iter()
-            .filter(|node| std::mem::discriminant(&node.node_type) == std::mem::discriminant(node_type))
+            .filter(|node| {
+                std::mem::discriminant(&node.node_type) == std::mem::discriminant(node_type)
+            })
             .collect()
     }
 
@@ -176,10 +178,5 @@ impl Edge {
             edge_type,
             properties: HashMap::new(),
         }
-    }
-
-    pub fn with_property(mut self, key: &str, value: &str) -> Self {
-        self.properties.insert(key.to_string(), value.to_string());
-        self
     }
 }

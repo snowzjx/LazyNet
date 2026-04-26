@@ -55,7 +55,7 @@ impl Default for Config {
 impl Config {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
-        
+
         // Expand ~ to home directory
         let expanded_path = if path.to_string_lossy().starts_with("~/") {
             if let Some(home) = dirs::home_dir() {
@@ -66,27 +66,27 @@ impl Config {
         } else {
             path.to_path_buf()
         };
-        
+
         if !expanded_path.exists() {
             // Create default config file
             let config = Config::default();
             config.save_to_file(&expanded_path)?;
             return Ok(config);
         }
-        
+
         let content = std::fs::read_to_string(&expanded_path)?;
         let config: Config = toml::from_str(&content)?;
         Ok(config)
     }
-    
+
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let path = path.as_ref();
-        
+
         // Create parent directories if they don't exist
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        
+
         let content = toml::to_string_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
