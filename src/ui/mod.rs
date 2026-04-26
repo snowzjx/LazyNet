@@ -157,6 +157,7 @@ pub struct Ui {
     show_help: bool,
     search_mode: bool,
     selected_index: usize,
+    raw_scroll_offset: u16,
     pub recording: Option<CounterRecording>,
     refresh_interval: Duration,
     show_raw_tab: bool,
@@ -171,6 +172,7 @@ impl Ui {
             show_help: false,
             search_mode: false,
             selected_index: 0,
+            raw_scroll_offset: 0,
             recording: None,
             refresh_interval: Duration::from_millis(config.refresh_interval_ms.max(100)),
             show_raw_tab,
@@ -268,6 +270,7 @@ impl Ui {
                             if self.show_raw_tab {
                                 self.current_tab = Tab::Raw;
                                 self.selected_index = 0;
+                                self.raw_scroll_offset = 0;
                             }
                         }
                         KeyCode::Char('/') => {
@@ -286,14 +289,66 @@ impl Ui {
                             }
                         }
                         KeyCode::Up => {
-                            if self.selected_index > 0 {
+                            if self.current_tab == Tab::Raw {
+                                self.raw_scroll_offset = self.raw_scroll_offset.saturating_sub(1);
+                            } else if self.selected_index > 0 {
                                 self.selected_index -= 1;
                             }
                         }
                         KeyCode::Down => {
-                            let len = self.current_list_len(inventory);
-                            if len > 0 && self.selected_index + 1 < len {
-                                self.selected_index += 1;
+                            if self.current_tab == Tab::Raw {
+                                self.raw_scroll_offset = self.raw_scroll_offset.saturating_add(1);
+                            } else {
+                                let len = self.current_list_len(inventory);
+                                if len > 0 && self.selected_index + 1 < len {
+                                    self.selected_index += 1;
+                                }
+                            }
+                        }
+                        KeyCode::PageUp => {
+                            if self.current_tab == Tab::Raw {
+                                self.raw_scroll_offset = self
+                                    .raw_scroll_offset
+                                    .saturating_sub(raw_page_step(terminal));
+                            }
+                        }
+                        KeyCode::PageDown => {
+                            if self.current_tab == Tab::Raw {
+                                self.raw_scroll_offset = self
+                                    .raw_scroll_offset
+                                    .saturating_add(raw_page_step(terminal));
+                            } else {
+                                let len = self.current_list_len(inventory);
+                                let step = raw_page_step(terminal) as usize;
+                                if len > 0 {
+                                    self.selected_index =
+                                        (self.selected_index + step).min(len.saturating_sub(1));
+                                }
+                            }
+                        }
+                        KeyCode::Home => {
+                            if self.current_tab == Tab::Raw {
+                                self.raw_scroll_offset = 0;
+                            } else {
+                                self.selected_index = 0;
+                            }
+                        }
+                        KeyCode::End => {
+                            if self.current_tab == Tab::Raw {
+                                self.raw_scroll_offset = u16::MAX;
+                            } else {
+                                let len = self.current_list_len(inventory);
+                                self.selected_index = len.saturating_sub(1);
+                            }
+                        }
+                        KeyCode::Char('g') => {
+                            if self.current_tab == Tab::Raw {
+                                self.raw_scroll_offset = 0;
+                            }
+                        }
+                        KeyCode::Char('G') => {
+                            if self.current_tab == Tab::Raw {
+                                self.raw_scroll_offset = u16::MAX;
                             }
                         }
                         KeyCode::Left => {
@@ -400,7 +455,13 @@ impl Ui {
                 self.recording.as_ref(),
             ),
             Tab::Pci => pci::draw(f, area, inventory, &self.search_query, self.selected_index),
-            Tab::Raw => raw::draw(f, area, inventory, &self.search_query),
+            Tab::Raw => raw::draw(
+                f,
+                area,
+                inventory,
+                &self.search_query,
+                self.raw_scroll_offset,
+            ),
         }
     }
 
@@ -499,7 +560,14 @@ impl Ui {
             ]),
             Line::from(vec![
                 Span::styled("↑/↓", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" - Navigate items"),
+                Span::raw(" - Navigate items / scroll Raw"),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    "PageUp/PageDown",
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" - Scroll Raw by page"),
             ]),
             Line::from(vec![
                 Span::styled("/", Style::default().add_modifier(Modifier::BOLD)),
@@ -563,7 +631,7 @@ impl Ui {
                      Style::default().bg(Color::Green).fg(Color::Black))
                 }
                 None => (
-                    "q: Quit | h: Help | Tab: Switch tabs | ↑↓: Navigate | ←→: Connected | /: Search | [: Start recording".into(),
+                    "q: Quit | h: Help | Tab: Switch tabs | ↑↓: Navigate/Scroll | PgUp/PgDn: Page Raw | ←→: Connected | /: Search | [: Start recording".into(),
                     Style::default().bg(Color::DarkGray).fg(Color::White),
                 ),
             }
@@ -668,6 +736,13 @@ fn tab_for_node_type(node_type: &NodeType) -> Tab {
         NodeType::PciDevice => Tab::Pci,
         _ => Tab::Interfaces,
     }
+}
+
+fn raw_page_step<B: Backend>(terminal: &Terminal<B>) -> u16 {
+    terminal
+        .size()
+        .map(|area| area.height.saturating_sub(5).max(1))
+        .unwrap_or(10)
 }
 
 /// Read current counters live from sysfs for all known devices.

@@ -23,11 +23,12 @@ This makes it trivial to answer questions like:
 ## Features
 
 - **Interfaces tab** — all network interfaces with state, MAC, MTU, and live traffic counters
-- **RDMA tab** — RDMA devices with transport type, firmware version, GUID, netdev mapping, PFC config, port counters, and RoCE/congestion counters (ECN/CNP, retransmits, buffer errors)
+- **RDMA tab** — RDMA ports with transport type, firmware version, GUID, netdev mapping, PFC config, port counters, and RoCE/congestion counters (ECN/CNP, retransmits, buffer errors)
 - **PCI tab** — all PCI devices with vendor/device/class, driver, PCIe link speed and width (with degraded detection), NUMA node, IOMMU group
-- **Raw tab** — full JSON inventory dump for debugging
+- **Raw tab** — live, stable JSON inventory dump for debugging, with line and page scrolling
 - **Counter recording** — press `[` to start, `]` to finish; shows delta counts and throughput rates
 - **Search** — `/` to filter any tab by name, vendor, or description
+- **Graph navigation** — `←`/`→` jumps between connected Interface, RDMA, and PCI devices
 - **Navigation** — `↑`/`↓` to select items; detail panel updates live
 
 ## Installation
@@ -52,7 +53,9 @@ lazynet --config /path/to/config.toml
 |-----|--------|
 | `Tab` / `Shift+Tab` | Switch tabs |
 | `1`–`4` | Jump to tab |
-| `↑` / `↓` | Navigate list |
+| `↑` / `↓` | Navigate list / scroll Raw by line |
+| `PageUp` / `PageDown` | Scroll Raw by page |
+| `←` / `→` | Jump to connected Interface/RDMA/PCI device |
 | `/` | Search |
 | `Esc` | Clear search / exit delta view |
 | `[` | Start counter recording |
@@ -90,8 +93,8 @@ include_metadata = true
 | RDMA devices | `/sys/class/infiniband/`, `ibv_devinfo` |
 | RDMA→netdev mapping | `rdma link` |
 | PFC config | `dcb pfc show` |
-| PFC / port counters | `ethtool -S`, `/sys/class/infiniband/*/ports/1/counters/` |
-| RoCE hw counters | `/sys/class/infiniband/*/ports/1/hw_counters/` |
+| PFC / port counters | `ethtool -S`, `/sys/class/infiniband/*/ports/*/counters/` |
+| RoCE hw counters | `/sys/class/infiniband/*/ports/*/hw_counters/` |
 
 ## Requirements
 

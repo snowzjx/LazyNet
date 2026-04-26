@@ -7,11 +7,20 @@ use ratatui::{
 };
 use serde_json::{Map, Value};
 
-pub fn draw(f: &mut Frame, area: Rect, inventory: &Inventory, _search_query: &str) {
+pub fn draw(
+    f: &mut Frame,
+    area: Rect,
+    inventory: &Inventory,
+    _search_query: &str,
+    scroll_offset: u16,
+) {
     let json_str = match serde_json::to_string_pretty(&stable_inventory_value(inventory)) {
         Ok(json) => json,
         Err(e) => format!("Error serializing inventory: {}", e),
     };
+    let visible_lines = area.height.saturating_sub(2);
+    let max_scroll = (json_str.lines().count() as u16).saturating_sub(visible_lines);
+    let scroll_offset = scroll_offset.min(max_scroll);
 
     let paragraph = Paragraph::new(json_str)
         .block(
@@ -24,6 +33,7 @@ pub fn draw(f: &mut Frame, area: Rect, inventory: &Inventory, _search_query: &st
                 ))
                 .style(Style::default().fg(Color::White)),
         )
+        .scroll((scroll_offset, 0))
         .style(Style::default().fg(Color::Gray));
 
     f.render_widget(paragraph, area);
