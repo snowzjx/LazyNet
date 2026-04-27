@@ -612,11 +612,88 @@ impl Ui {
     }
 
     fn draw_help(&self, f: &mut Frame) {
-        let area = centered_rect(60, 50, f.size());
+        let area = centered_rect(74, 68, f.size());
         f.render_widget(Clear, area);
 
         let help_text = vec![
-            Line::from("LazyNet - Network Device Inspector"),
+            Line::from(vec![Span::styled(
+                " _                    _   _      _   ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(vec![Span::styled(
+                "| |    __ _ _____   _| \\ | | ___| |_ ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(vec![Span::styled(
+                "| |   / _` |_  / | | |  \\| |/ _ \\ __|",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(vec![Span::styled(
+                "| |__| (_| |/ /| |_| | |\\  |  __/ |_ ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(vec![Span::styled(
+                "|_____\\__,_/___|\\__, |_| \\_|\\___|\\__|",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(vec![Span::styled(
+                "                 |___/                 ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(vec![
+                Span::raw("Network Device Inspector"),
+                Span::raw("  |  "),
+                Span::styled(
+                    "Junxue ZHANG",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "Recording workflow",
+                Style::default()
+                    .fg(Color::LightRed)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(vec![
+                Span::styled(
+                    "[",
+                    Style::default()
+                        .fg(Color::LightRed)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" start snapshot  "),
+                Span::styled(
+                    "]",
+                    Style::default()
+                        .fg(Color::LightRed)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" finish snapshot  "),
+                Span::styled(
+                    "Delta view",
+                    Style::default()
+                        .fg(Color::LightGreen)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" shows traffic, errors, RDMA/RoCE changes"),
+            ]),
+            Line::from(""),
+            Line::from("Controls"),
             Line::from(""),
             Line::from(vec![
                 Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
@@ -663,14 +740,6 @@ impl Ui {
             Line::from(vec![
                 Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" - Clear search/Close help"),
-            ]),
-            Line::from(vec![
-                Span::styled("[", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" - Start counter recording"),
-            ]),
-            Line::from(vec![
-                Span::styled("]", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" - Finish recording / show delta"),
             ]),
         ];
 
