@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_NAME: lazynet
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --all-features --locked
+
+  linux-package:
+    name: Linux package
+    needs: test
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install packaging tools
+        run: |
+          cargo install cargo-deb --locked
+          cargo install cargo-generate-rpm --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Collect package metadata
+        id: meta
+        shell: bash
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64) deb_arch="amd64"; rpm_arch="x86_64" ;;
+            aarch64) deb_arch="arm64"; rpm_arch="aarch64" ;;
+            *) deb_arch="$arch"; rpm_arch="$arch" ;;
+          esac
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "arch=$arch" >> "$GITHUB_OUTPUT"
+          echo "deb_arch=$deb_arch" >> "$GITHUB_OUTPUT"
+          echo "rpm_arch=$rpm_arch" >> "$GITHUB_OUTPUT"
+
+      - name: Build tarball
+        shell: bash
+        run: |
+          mkdir -p dist
+          tar -C target/release -czf "dist/${BIN_NAME}-${{ steps.meta.outputs.version }}-linux-${{ steps.meta.outputs.arch }}.tar.gz" "${BIN_NAME}"
+
+      - name: Build Debian package
+        run: cargo deb --no-build --output "dist/${BIN_NAME}_${{ steps.meta.outputs.version }}_${{ steps.meta.outputs.deb_arch }}.deb"
+
+      - name: Build RPM package
+        run: cargo generate-rpm --output "dist/${BIN_NAME}-${{ steps.meta.outputs.version }}-1.${{ steps.meta.outputs.rpm_arch }}.rpm"
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

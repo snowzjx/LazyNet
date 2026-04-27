@@ -6,6 +6,11 @@ description = "Terminal User Interface (TUI) system tool for network device insp
 authors = ["LazyNet Team"]
 license = "MIT"
 
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/lazynet", dest = "/usr/bin/lazynet", mode = "755" },
+]
+
 [dependencies]
 ratatui = "0.26"
 crossterm = "0.27"

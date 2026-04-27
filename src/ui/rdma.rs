@@ -293,9 +293,9 @@ fn draw_detail(
     );
 
     let roce_title = match recording {
-        Some(CounterRecording::Started(_)) => "RoCE / Congestion [RECORDING]".into(),
-        Some(CounterRecording::Finished { .. }) => format!("RoCE / Congestion [DELTA]"),
-        None => "RoCE / Congestion".into(),
+        Some(CounterRecording::Started(_)) => "RoCE / Congestion [RECORDING]",
+        Some(CounterRecording::Finished { .. }) => "RoCE / Congestion [DELTA]",
+        None => "RoCE / Congestion",
     };
     let roce_lines = build_roce_lines(rdma_c.as_ref(), recording);
     f.render_widget(

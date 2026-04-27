@@ -266,12 +266,10 @@ impl Ui {
                             self.current_tab = Tab::Pci;
                             self.selected_index = 0;
                         }
-                        KeyCode::Char('4') => {
-                            if self.show_raw_tab {
-                                self.current_tab = Tab::Raw;
-                                self.selected_index = 0;
-                                self.raw_scroll_offset = 0;
-                            }
+                        KeyCode::Char('4') if self.show_raw_tab => {
+                            self.current_tab = Tab::Raw;
+                            self.selected_index = 0;
+                            self.raw_scroll_offset = 0;
                         }
                         KeyCode::Char('/') => {
                             self.search_mode = true;
@@ -305,12 +303,10 @@ impl Ui {
                                 }
                             }
                         }
-                        KeyCode::PageUp => {
-                            if self.current_tab == Tab::Raw {
-                                self.raw_scroll_offset = self
-                                    .raw_scroll_offset
-                                    .saturating_sub(raw_page_step(terminal));
-                            }
+                        KeyCode::PageUp if self.current_tab == Tab::Raw => {
+                            self.raw_scroll_offset = self
+                                .raw_scroll_offset
+                                .saturating_sub(raw_page_step(terminal));
                         }
                         KeyCode::PageDown => {
                             if self.current_tab == Tab::Raw {
@@ -341,15 +337,11 @@ impl Ui {
                                 self.selected_index = len.saturating_sub(1);
                             }
                         }
-                        KeyCode::Char('g') => {
-                            if self.current_tab == Tab::Raw {
-                                self.raw_scroll_offset = 0;
-                            }
+                        KeyCode::Char('g') if self.current_tab == Tab::Raw => {
+                            self.raw_scroll_offset = 0;
                         }
-                        KeyCode::Char('G') => {
-                            if self.current_tab == Tab::Raw {
-                                self.raw_scroll_offset = u16::MAX;
-                            }
+                        KeyCode::Char('G') if self.current_tab == Tab::Raw => {
+                            self.raw_scroll_offset = u16::MAX;
                         }
                         KeyCode::Left => {
                             self.navigate_connected(inventory, DirectionHint::Left);
@@ -678,7 +670,7 @@ fn filtered_nodes_for_query<'a>(inventory: &'a Inventory, tab: Tab, q: &str) -> 
             .filter(|n| {
                 q.is_empty()
                     || n.get_property("name")
-                        .map(|v| v.to_lowercase().contains(&q))
+                        .map(|v| v.to_lowercase().contains(q))
                         .unwrap_or(false)
             })
             .copied()
@@ -690,7 +682,7 @@ fn filtered_nodes_for_query<'a>(inventory: &'a Inventory, tab: Tab, q: &str) -> 
                 q.is_empty()
                     || ["name", "display_name", "port"].iter().any(|key| {
                         n.get_property(key)
-                            .map(|v| v.to_lowercase().contains(&q))
+                            .map(|v| v.to_lowercase().contains(q))
                             .unwrap_or(false)
                     })
             })
@@ -705,7 +697,7 @@ fn filtered_nodes_for_query<'a>(inventory: &'a Inventory, tab: Tab, q: &str) -> 
                         .iter()
                         .any(|k| {
                             n.get_property(k)
-                                .map(|v| v.to_lowercase().contains(&q))
+                                .map(|v| v.to_lowercase().contains(q))
                                 .unwrap_or(false)
                         })
             })
