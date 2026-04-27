@@ -152,7 +152,7 @@ impl NetworkCollector {
 
         #[cfg(target_os = "linux")]
         {
-            let output = Command::new("ip").args(&["link", "show"]).output()?;
+            let output = Command::new("ip").args(["link", "show"]).output()?;
 
             let stdout = String::from_utf8_lossy(&output.stdout);
             let mut current_interface = None;
@@ -210,7 +210,7 @@ impl NetworkCollector {
 impl Collector for NetworkCollector {
     async fn collect(&self, inventory: &mut Inventory) -> Result<()> {
         #[cfg(target_os = "linux")]
-        let output = Command::new("ip").args(&["addr", "show"]).output()?;
+        let output = Command::new("ip").args(["addr", "show"]).output()?;
 
         #[cfg(target_os = "macos")]
         let output = Command::new("ifconfig").output()?;
