@@ -7,7 +7,10 @@ use crate::config::{CollectorConfig, UiConfig};
 use crate::data::{IfaceCounters, Inventory, Node, NodeType, RdmaCounters};
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, MouseButton, MouseEvent,
+        MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -217,11 +220,8 @@ impl Ui {
             let timeout = self.refresh_interval.saturating_sub(elapsed);
 
             if event::poll(timeout)? {
-                let Event::Key(key) = event::read()? else {
-                    continue;
-                };
-                if self.search_mode {
-                    match key.code {
+                match event::read()? {
+                    Event::Key(key) if self.search_mode => match key.code {
                         KeyCode::Enter => {
                             self.search_mode = false;
                         }
@@ -239,9 +239,8 @@ impl Ui {
                             self.selected_index = 0;
                         }
                         _ => {}
-                    }
-                } else {
-                    match key.code {
+                    },
+                    Event::Key(key) => match key.code {
                         KeyCode::Char('q') => return Ok(()),
                         KeyCode::Char('h') | KeyCode::F(1) => {
                             self.show_help = !self.show_help;
@@ -355,7 +354,11 @@ impl Ui {
                             self.recording = None;
                         }
                         _ => {}
+                    },
+                    Event::Mouse(mouse) => {
+                        self.handle_mouse(mouse, terminal, inventory);
                     }
+                    _ => {}
                 }
                 if last_refresh.elapsed() >= self.refresh_interval {
                     refresh_inventory(inventory, collectors).await?;
@@ -369,37 +372,17 @@ impl Ui {
     }
 
     fn draw(&self, f: &mut Frame, inventory: &Inventory) {
-        let main_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(0),    // Main content area
-                Constraint::Length(1), // Status bar
-            ])
-            .split(f.size());
+        let layout = ui_layout(f.size(), self.search_mode);
 
-        // Split main content area
-        let content_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Tabs
-                Constraint::Min(0),    // Content
-                if self.search_mode {
-                    Constraint::Length(3)
-                } else {
-                    Constraint::Length(0)
-                }, // Search
-            ])
-            .split(main_chunks[0]);
+        self.draw_tabs(f, layout.tabs);
+        self.draw_content(f, layout.content, inventory);
 
-        self.draw_tabs(f, content_chunks[0]);
-        self.draw_content(f, content_chunks[1], inventory);
-
-        if self.search_mode {
-            self.draw_search_input(f, content_chunks[2]);
+        if let Some(search) = layout.search {
+            self.draw_search_input(f, search);
         }
 
         // Always draw status bar at the bottom
-        self.draw_status_bar(f, main_chunks[1]);
+        self.draw_status_bar(f, layout.status);
 
         if self.show_help {
             self.draw_help(f);
@@ -459,6 +442,114 @@ impl Ui {
 
     fn current_list_len(&self, inventory: &Inventory) -> usize {
         self.filtered_nodes(inventory, self.current_tab).len()
+    }
+
+    fn handle_mouse<B: Backend>(
+        &mut self,
+        mouse: MouseEvent,
+        terminal: &Terminal<B>,
+        inventory: &Inventory,
+    ) {
+        if self.search_mode {
+            return;
+        }
+
+        let Ok(size) = terminal.size() else {
+            return;
+        };
+        let layout = ui_layout(size, self.search_mode);
+
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if self.show_help {
+                    self.show_help = false;
+                    return;
+                }
+
+                if rect_contains(layout.tabs, mouse.column, mouse.row) {
+                    self.select_tab_at(mouse.column, layout.tabs);
+                } else if rect_contains(layout.content, mouse.column, mouse.row) {
+                    self.select_content_at(mouse.column, mouse.row, layout.content, inventory);
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                self.scroll_current(-3, terminal, inventory);
+            }
+            MouseEventKind::ScrollDown => {
+                self.scroll_current(3, terminal, inventory);
+            }
+            _ => {}
+        }
+    }
+
+    fn select_tab_at(&mut self, column: u16, area: Rect) {
+        let tabs = Tab::all(self.show_raw_tab);
+        let mut start = area.x.saturating_add(1);
+
+        for tab in tabs {
+            let width = tab.as_str().len() as u16;
+            let end = start.saturating_add(width);
+            if column >= start && column < end {
+                self.current_tab = tab;
+                self.selected_index = 0;
+                self.raw_scroll_offset = 0;
+                return;
+            }
+            start = end.saturating_add(3);
+        }
+    }
+
+    fn select_content_at(&mut self, column: u16, row: u16, area: Rect, inventory: &Inventory) {
+        if self.current_tab == Tab::Raw {
+            return;
+        }
+
+        let Some(list_area) = current_list_area(self.current_tab, area) else {
+            return;
+        };
+        if !rect_contains(list_area, column, row) {
+            return;
+        }
+
+        let row_offset = match self.current_tab {
+            Tab::Interfaces => row.saturating_sub(list_area.y.saturating_add(1)),
+            Tab::Rdma | Tab::Pci => row.saturating_sub(list_area.y.saturating_add(2)),
+            Tab::Raw => 0,
+        };
+        let len = self.current_list_len(inventory);
+        if len > 0 && row_offset < len as u16 {
+            self.selected_index = row_offset as usize;
+        }
+    }
+
+    fn scroll_current<B: Backend>(
+        &mut self,
+        amount: i16,
+        terminal: &Terminal<B>,
+        inventory: &Inventory,
+    ) {
+        if self.current_tab == Tab::Raw {
+            self.raw_scroll_offset = if amount.is_negative() {
+                self.raw_scroll_offset.saturating_sub(amount.unsigned_abs())
+            } else {
+                self.raw_scroll_offset.saturating_add(amount as u16)
+            };
+            return;
+        }
+
+        let len = self.current_list_len(inventory);
+        if len == 0 {
+            self.selected_index = 0;
+            return;
+        }
+
+        let step = if amount == 0 {
+            raw_page_step(terminal) as isize
+        } else {
+            amount as isize
+        };
+        let next = (self.selected_index as isize + step).clamp(0, len.saturating_sub(1) as isize);
+        self.selected_index = next as usize;
     }
 
     fn filtered_nodes<'a>(&self, inventory: &'a Inventory, tab: Tab) -> Vec<&'a Node> {
@@ -555,6 +646,10 @@ impl Ui {
                 Span::raw(" - Navigate items / scroll Raw"),
             ]),
             Line::from(vec![
+                Span::styled("Mouse", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(" - Click tabs/items, wheel to navigate/scroll"),
+            ]),
+            Line::from(vec![
                 Span::styled(
                     "PageUp/PageDown",
                     Style::default().add_modifier(Modifier::BOLD),
@@ -623,7 +718,7 @@ impl Ui {
                      Style::default().bg(Color::Green).fg(Color::Black))
                 }
                 None => (
-                    "q: Quit | h: Help | Tab: Switch tabs | ↑↓: Navigate/Scroll | PgUp/PgDn: Page Raw | ←→: Connected | /: Search | [: Start recording".into(),
+                    "q: Quit | h: Help | Click tabs/items | Wheel/↑↓: Navigate/Scroll | PgUp/PgDn: Page Raw | ←→: Connected | /: Search | [: Start recording".into(),
                     Style::default().bg(Color::DarkGray).fg(Color::White),
                 ),
             }
@@ -654,6 +749,74 @@ impl Ui {
         };
         self.current_tab = tabs[prev_index];
     }
+}
+
+struct UiLayout {
+    tabs: Rect,
+    content: Rect,
+    search: Option<Rect>,
+    status: Rect,
+}
+
+fn ui_layout(area: Rect, search_mode: bool) -> UiLayout {
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),    // Main content area
+            Constraint::Length(1), // Status bar
+        ])
+        .split(area);
+
+    let content_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Tabs
+            Constraint::Min(0),    // Content
+            if search_mode {
+                Constraint::Length(3)
+            } else {
+                Constraint::Length(0)
+            }, // Search
+        ])
+        .split(main_chunks[0]);
+
+    UiLayout {
+        tabs: content_chunks[0],
+        content: content_chunks[1],
+        search: search_mode.then_some(content_chunks[2]),
+        status: main_chunks[1],
+    }
+}
+
+fn current_list_area(tab: Tab, area: Rect) -> Option<Rect> {
+    match tab {
+        Tab::Interfaces => Some(
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+                .split(area)[0],
+        ),
+        Tab::Rdma => Some(
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+                .split(area)[0],
+        ),
+        Tab::Pci => Some(
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(area)[0],
+        ),
+        Tab::Raw => None,
+    }
+}
+
+fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
+    column >= area.x
+        && column < area.x.saturating_add(area.width)
+        && row >= area.y
+        && row < area.y.saturating_add(area.height)
 }
 
 #[derive(Debug, Clone, Copy)]

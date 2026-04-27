@@ -28,6 +28,7 @@ This makes it trivial to answer questions like:
 - **Raw tab** — live, stable JSON inventory dump for debugging, with line and page scrolling
 - **Counter recording** — press `[` to start, `]` to finish; shows delta counts and throughput rates
 - **Search** — `/` to filter any tab by name, vendor, or description
+- **Mouse support** — click tabs/items and use the wheel to navigate lists or scroll Raw JSON
 - **Graph navigation** — `←`/`→` jumps between connected Interface, RDMA, and PCI devices
 - **Navigation** — `↑`/`↓` to select items; detail panel updates live
 
@@ -55,6 +56,8 @@ lazynet --config /path/to/config.toml
 | `1`–`4` | Jump to tab |
 | `↑` / `↓` | Navigate list / scroll Raw by line |
 | `PageUp` / `PageDown` | Scroll Raw by page |
+| Mouse click | Select tabs or list/table rows |
+| Mouse wheel | Navigate lists or scroll Raw |
 | `←` / `→` | Jump to connected Interface/RDMA/PCI device |
 | `/` | Search |
 | `Esc` | Clear search / exit delta view |
