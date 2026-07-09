@@ -248,6 +248,7 @@ impl Collector for NetworkCollector {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn read_stat(dev: &str, stat: &str) -> u64 {
     std::fs::read_to_string(format!("/sys/class/net/{}/statistics/{}", dev, stat))
         .ok()
@@ -255,6 +256,7 @@ fn read_stat(dev: &str, stat: &str) -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(target_os = "linux")]
 pub fn read_iface_counters(dev: &str) -> IfaceCounters {
     IfaceCounters {
         rx_bytes: read_stat(dev, "rx_bytes"),
@@ -268,4 +270,106 @@ pub fn read_iface_counters(dev: &str) -> IfaceCounters {
         rx_missed: read_stat(dev, "rx_missed_errors"),
         collisions: read_stat(dev, "collisions"),
     }
+}
+
+#[cfg(target_os = "macos")]
+pub fn read_iface_counters(dev: &str) -> IfaceCounters {
+    use std::ptr;
+
+    let mut mib = [libc::CTL_NET, libc::PF_ROUTE, 0, 0, libc::NET_RT_IFLIST2, 0];
+    let mut len: libc::size_t = 0;
+
+    let size_result = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as libc::c_uint,
+            ptr::null_mut(),
+            &mut len,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if size_result != 0 || len == 0 {
+        return IfaceCounters::default();
+    }
+
+    let mut buf = vec![0_u8; len as usize];
+    let read_result = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as libc::c_uint,
+            buf.as_mut_ptr() as *mut libc::c_void,
+            &mut len,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if read_result != 0 {
+        return IfaceCounters::default();
+    }
+
+    let mut cursor = buf.as_ptr();
+    let end = unsafe { buf.as_ptr().add(len as usize) };
+
+    while cursor < end {
+        let remaining = unsafe { end.offset_from(cursor) as usize };
+        if remaining < std::mem::size_of::<libc::if_msghdr2>() {
+            break;
+        }
+
+        let msg = cursor as *const libc::if_msghdr2;
+        let msg_len = unsafe { ptr::addr_of!((*msg).ifm_msglen).read_unaligned() as usize };
+        if msg_len == 0 || msg_len > remaining {
+            break;
+        }
+
+        let msg_type = unsafe { ptr::addr_of!((*msg).ifm_type).read_unaligned() as libc::c_int };
+        if msg_type == libc::RTM_IFINFO2 {
+            let index = unsafe { ptr::addr_of!((*msg).ifm_index).read_unaligned() };
+            if iface_name(index as libc::c_uint).as_deref() == Some(dev) {
+                let data = unsafe { ptr::addr_of!((*msg).ifm_data) };
+                let tx_dropped =
+                    unsafe { ptr::addr_of!((*msg).ifm_snd_drops).read_unaligned() }.max(0) as u64;
+
+                return IfaceCounters {
+                    rx_bytes: unsafe { ptr::addr_of!((*data).ifi_ibytes).read_unaligned() },
+                    tx_bytes: unsafe { ptr::addr_of!((*data).ifi_obytes).read_unaligned() },
+                    rx_packets: unsafe { ptr::addr_of!((*data).ifi_ipackets).read_unaligned() },
+                    tx_packets: unsafe { ptr::addr_of!((*data).ifi_opackets).read_unaligned() },
+                    rx_errors: unsafe { ptr::addr_of!((*data).ifi_ierrors).read_unaligned() },
+                    tx_errors: unsafe { ptr::addr_of!((*data).ifi_oerrors).read_unaligned() },
+                    rx_dropped: unsafe { ptr::addr_of!((*data).ifi_iqdrops).read_unaligned() },
+                    tx_dropped,
+                    rx_missed: 0,
+                    collisions: unsafe { ptr::addr_of!((*data).ifi_collisions).read_unaligned() },
+                };
+            }
+        }
+
+        cursor = unsafe { cursor.add(msg_len) };
+    }
+
+    IfaceCounters::default()
+}
+
+#[cfg(target_os = "macos")]
+fn iface_name(index: libc::c_uint) -> Option<String> {
+    use std::ffi::CStr;
+
+    let mut name = [0 as libc::c_char; libc::IF_NAMESIZE as usize];
+    let ptr = unsafe { libc::if_indextoname(index, name.as_mut_ptr()) };
+    if ptr.is_null() {
+        return None;
+    }
+
+    Some(
+        unsafe { CStr::from_ptr(name.as_ptr()) }
+            .to_string_lossy()
+            .into_owned(),
+    )
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn read_iface_counters(_dev: &str) -> IfaceCounters {
+    IfaceCounters::default()
 }

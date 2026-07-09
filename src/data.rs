@@ -26,7 +26,7 @@ pub struct RdmaCounters {
     pub rx_icrc_encapsulated: u64,
 }
 
-/// Traffic counters for a network interface (from /sys/class/net/<dev>/statistics/).
+/// Traffic counters for a network interface.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IfaceCounters {
     pub rx_bytes: u64,

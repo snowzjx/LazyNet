@@ -969,7 +969,7 @@ fn raw_page_step<B: Backend>(terminal: &Terminal<B>) -> u16 {
         .unwrap_or(10)
 }
 
-/// Read current counters live from sysfs for all known devices.
+/// Read current counters live for all known devices.
 fn live_snapshot(inventory: &Inventory) -> CounterSnapshot {
     let counters = inventory
         .get_nodes_by_type(&NodeType::NetworkInterface)
